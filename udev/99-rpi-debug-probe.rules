@@ -1,0 +1,11 @@
+# Raspberry Pi Debug Probe (CMSIS-DAP) - allow non-root access
+ACTION!="add|change", GOTO="rpi_probe_end"
+SUBSYSTEM!="usb", GOTO="rpi_probe_end"
+
+# Raspberry Pi Debug Probe (2e8a:000c)
+ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000c", MODE="664", GROUP="plugdev"
+# Generic CMSIS-DAP
+ATTRS{idVendor}=="2b3e", ATTRS{idProduct}=="0003", MODE="664", GROUP="plugdev"
+ATTRS{product}=="*CMSIS-DAP*", MODE="664", GROUP="plugdev"
+
+LABEL="rpi_probe_end"

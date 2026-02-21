@@ -1,0 +1,114 @@
+OTA Stress Test: BLE first, Serial fallback.
+  Run 1 exception: Command '['C:\\Users\\warun\\AppData\\Local\\Programs\\Python\\Python39\\python.exe', 'C:\\Users\\warun\\Documents\\frc\\Ball2\\tools\\ota_auto.py', 'C:\\Users\\warun\\Documents\\frc\\Ball2\\tools\\fw_v1.bin', '1', '--serial-port', 'COM16']' timed out after 600 seconds
+Run 1/100 [v1] ? FAIL  14418.8s
+Run 2/100 [v2] Serial OK  197.9s
+Run 3/100 [v1] Serial OK  55.3s
+Run 4/100 [v2] Serial OK  55.3s
+Run 5/100 [v1] Serial OK  54.7s
+Run 6/100 [v2] Serial OK  55.3s
+Run 7/100 [v1] Serial OK  55.3s
+Run 8/100 [v2] Serial OK  55.0s
+Run 9/100 [v1] Serial OK  54.9s
+Run 10/100 [v2] Serial OK  55.3s
+Run 11/100 [v1] Serial OK  55.3s
+Run 12/100 [v2] Serial OK  54.9s
+Run 13/100 [v1] Serial OK  55.1s
+Run 14/100 [v2] Serial OK  55.3s
+Run 15/100 [v1] Serial OK  55.3s
+Run 16/100 [v2] Serial OK  54.8s
+Run 17/100 [v1] Serial OK  55.3s
+Run 18/100 [v2] Serial OK  55.3s
+Run 19/100 [v1] Serial OK  55.1s
+Run 20/100 [v2] Serial OK  54.9s
+Run 21/100 [v1] Serial OK  55.4s
+Run 22/100 [v2] Serial OK  55.3s
+Run 23/100 [v1] Serial OK  54.8s
+Run 24/100 [v2] Serial OK  55.1s
+Run 25/100 [v1] Serial OK  55.3s
+Run 26/100 [v2] Serial OK  55.2s
+Run 27/100 [v1] Serial OK  54.8s
+Run 28/100 [v2] Serial OK  55.3s
+Run 29/100 [v1] Serial OK  55.4s
+Run 30/100 [v2] Serial OK  55.1s
+Run 31/100 [v1] Serial OK  54.9s
+Run 32/100 [v2] Serial OK  55.2s
+Run 33/100 [v1] Serial OK  55.3s
+Run 34/100 [v2] Serial OK  54.8s
+Run 35/100 [v1] Serial OK  55.2s
+Run 36/100 [v2] Serial OK  55.4s
+Run 37/100 [v1] Serial OK  55.2s
+Run 38/100 [v2] Serial OK  54.8s
+Run 39/100 [v1] Serial OK  55.3s
+Run 40/100 [v2] Serial OK  55.3s
+Run 41/100 [v1] Serial OK  55.0s
+Run 42/100 [v2] Serial OK  55.0s
+Run 43/100 [v1] Serial OK  55.4s
+Run 44/100 [v2] Serial OK  55.3s
+Run 45/100 [v1] Serial OK  54.8s
+Run 46/100 [v2] Serial OK  55.3s
+Run 47/100 [v1] Serial OK  55.3s
+Run 48/100 [v2] Serial OK  55.0s
+Run 49/100 [v1] Serial OK  55.0s
+Run 50/100 [v2] Serial OK  55.4s
+Run 51/100 [v1] Serial OK  55.4s
+Run 52/100 [v2] Serial OK  54.8s
+Run 53/100 [v1] Serial OK  55.3s
+Run 54/100 [v2] Serial OK  55.4s
+Run 55/100 [v1] Serial OK  55.0s
+Run 56/100 [v2] Serial OK  55.0s
+Run 57/100 [v1] Serial OK  55.4s
+Run 58/100 [v2] Serial OK  55.4s
+Run 59/100 [v1] Serial OK  54.9s
+Run 60/100 [v2] Serial OK  55.3s
+Run 61/100 [v1] Serial OK  55.3s
+Run 62/100 [v2] Serial OK  55.2s
+Run 63/100 [v1] Serial OK  54.9s
+Run 64/100 [v2] Serial OK  55.3s
+Run 65/100 [v1] Serial OK  55.4s
+Run 66/100 [v2] Serial OK  54.8s
+Run 67/100 [v1] Serial OK  55.2s
+Run 68/100 [v2] Serial OK  55.4s
+Run 69/100 [v1] Serial OK  55.1s
+Run 70/100 [v2] Serial OK  54.9s
+Run 71/100 [v1] Serial OK  55.3s
+Run 72/100 [v2] Serial OK  55.3s
+Run 73/100 [v1] Serial OK  54.8s
+Run 74/100 [v2] Serial OK  55.3s
+Run 75/100 [v1] Serial OK  55.3s
+Run 76/100 [v2] Serial OK  55.1s
+Run 77/100 [v1] Serial OK  55.0s
+Run 78/100 [v2] Serial OK  55.3s
+Run 79/100 [v1] Serial OK  55.3s
+Run 80/100 [v2] Serial OK  54.7s
+Run 81/100 [v1] Serial OK  55.3s
+Run 82/100 [v2] Serial OK  55.3s
+Run 83/100 [v1] Serial OK  55.1s
+Run 84/100 [v2] Serial OK  54.8s
+Run 85/100 [v1] Serial OK  55.3s
+Run 86/100 [v2] Serial OK  55.3s
+Run 87/100 [v1] Serial OK  54.9s
+Run 88/100 [v2] Serial OK  55.0s
+Run 89/100 [v1] Serial OK  55.3s
+Run 90/100 [v2] Serial OK  55.3s
+Run 91/100 [v1] Serial OK  54.8s
+Run 92/100 [v2] Serial OK  55.4s
+Run 93/100 [v1] Serial OK  55.3s
+Run 94/100 [v2] Serial OK  55.1s
+Run 95/100 [v1] Serial OK  54.8s
+Run 96/100 [v2] Serial OK  55.3s
+Run 97/100 [v1] Serial OK  55.3s
+Run 98/100 [v2] Serial OK  54.8s
+Run 99/100 [v1] Serial OK  55.2s
+Run 100/100 [v2] Serial OK  55.3s
+============================================================
+OTA STRESS TEST REPORT
+============================================================
+Total runs:     100
+Success:        99
+Failure:        1
+BLE success:    0
+Serial success: 99
+Failed runs:    [1]
+Upgrade time (successful): min=54.7s  avg=56.6s  max=197.9s
+Total time:     21002.7s
+============================================================
