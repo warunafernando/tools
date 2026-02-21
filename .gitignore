@@ -1,0 +1,8 @@
+.venv/
+ncs-workspace/build/
+ncs-workspace/build_*/
+*.pyc
+__pycache__/
+msr1_ota/images/*.bin
+msr1_ota/logs/
+.DS_Store

@@ -1,0 +1,30 @@
+set pagination off
+set print pretty on
+target extended-remote :3333
+load
+break main
+break bt_enable
+break bt_thread_fn
+break z_arm_hard_fault
+commands 1
+  silent
+  printf "Hit main\n"
+  continue
+end
+commands 2
+  silent
+  printf "Hit bt_enable\n"
+  continue
+end
+commands 3
+  silent
+  printf "Hit bt_thread_fn\n"
+  continue
+end
+commands 4
+  printf "\n=== HARD FAULT - CRASH LOCATION ===\n"
+  bt full
+  info registers
+  printf "\n"
+end
+continue

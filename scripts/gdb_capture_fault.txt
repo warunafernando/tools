@@ -1,0 +1,21 @@
+set pagination off
+set print pretty on
+target extended-remote :3333
+break z_arm_fault
+commands
+  silent
+  printf "\n========== FAULT CAPTURED ==========\n"
+  bt full
+  printf "\n--- Registers ---\n"
+  info registers
+  printf "\n"
+  quit
+end
+# Device may already be halted in fault - dump current state
+printf "\n========== CURRENT STATE (may be in fault) ==========\n"
+info registers
+bt full
+printf "\n--- PC info ---\n"
+info symbol $pc
+x/8i $pc
+printf "\n"

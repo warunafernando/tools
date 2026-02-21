@@ -1,0 +1,11 @@
+set pagination off
+target extended-remote :3333
+# When stopped in z_arm_fault, CFSR shows fault cause
+# SCB base 0xE000ED00, CFSR at +0x28
+set $scb=(unsigned int*)0xE000ED00
+set $cfsr=*(unsigned int*)0xE000ED28
+set $hfsr=*(unsigned int*)0xE000ED2C
+printf "CFSR=0x%08x HFSR=0x%08x\n", $cfsr, $hfsr
+# CFSR bits: bit9 INVSTATE, bit8 UNALIGNED, bit0 DIVBYZERO, etc
+printf "INVSTATE=%d UNALIGNED=%d INVPC=%d NOCP=%d UNDEFINSTR=%d\n" \
+  (($cfsr>>9)&1) (($cfsr>>8)&1) (($cfsr>>2)&1) (($cfsr>>3)&1) (($cfsr>>16)&1)

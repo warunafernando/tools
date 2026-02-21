@@ -1,0 +1,8 @@
+set pagination off
+target extended-remote :3333
+printf "\n=== Device state check ===\n"
+info registers pc
+info symbol $pc
+bt 5
+printf "\n"
+# If in fault handler, pc would be in arch_system_halt or z_arm_fault

@@ -1,0 +1,21 @@
+target extended-remote :3333
+monitor reset halt
+load
+break main
+break bt_enable
+break bt_thread_fn
+break z_arm_hard_fault
+break HardFault_Handler
+commands
+  silent
+  echo \n=== CRASH/HALT ===\n
+  bt full
+  echo \n--- Registers ---
+  info registers
+  echo \n--- Local vars (main) ---
+  frame 0
+  info locals
+  echo \n
+  continue
+end
+continue
