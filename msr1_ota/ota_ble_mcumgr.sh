@@ -56,4 +56,6 @@ if [ "$SKIP_CHECK" = false ]; then
 else
   echo "=== Upload + test + reset (skipping state-read) ==="
 fi
-smp --ble "$ADDR" --timeout 60 upgrade "$IMAGE"
+# Erase slot 1 first to avoid NO_FREE_SLOT when both slots have images
+smp --ble "$ADDR" --timeout 30 image erase 1 2>/dev/null || true
+smp --ble "$ADDR" --timeout 60 upgrade --slot 1 "$IMAGE"

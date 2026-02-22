@@ -42,6 +42,18 @@ RSP_ID (0x81) payload:
 
 Serial number source: nRF52840 FICR DEVICEID (64-bit).
 
+## 3.1 Device Identity (MCUmgr / SMP)
+
+For detection when connected via BLE or serial, use custom MCUmgr group 65, command 0:
+
+  Request:  SMP read, group_id=65, command_id=0
+  Response: CBOR map { "rc": 0, "serial": "<16-char hex>", "part": "<part_number>" }
+
+- serial: 64-bit FICR DEVICEID as 16-char hex string
+- part: Part number string (e.g. "XIAO-BLE-SENSE")
+
+Query via: `python device_identity.py serial /dev/ttyACM0` or `device_identity.py ble AA:BB:CC:DD:EE:FF`
+
 ------------------------------------------------------------------------
 
 # 4. Status & Health

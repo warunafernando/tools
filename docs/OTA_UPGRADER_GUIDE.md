@@ -158,6 +158,12 @@ Runs `image state-read` before upgrade. May add ~8s and can hit "No Bluetooth ad
 - Confirm it was flashed successfully
 - Rescan: `bluetoothctl scan on` (wait 10s)
 
+### v2 shows green instead of red LED
+
+- Some XIAO BLE Sense boards have swapped red/green wiring (P0.26=green, P0.30=red)
+- **Fix:** Board overlay `nrf/app/boards/xiao_ble_sense.overlay` swaps led0/led1 GPIOs
+- Rebuild and flash v2 to apply; v2 should then blink red
+
 ---
 
 ## 7. Quick Reference
@@ -170,3 +176,16 @@ Runs `image state-read` before upgrade. May add ~8s and can hit "No Bluetooth ad
 | Stress 100 | `./msr1_ota/ota_stress_100.sh <ADDR>` |
 | Stress 5 | `./msr1_ota/ota_stress_100.sh <ADDR> 5` |
 | Find device | `bluetoothctl scan on` then `bluetoothctl devices` |
+| Web GUI | `cd msr1_ota/web_gui && ./run.sh` then open http://localhost:5050 |
+
+---
+
+## 8. Summary — Key Files
+
+| File | Purpose |
+|------|---------|
+| `nrf/app/boards/xiao_ble_sense.overlay` | **LED wiring fix:** swaps led0/led1 so v2 shows red on boards where DTS labels don’t match physical wiring |
+| `msr1_ota/ota_ble_mcumgr.sh` | Single BLE OTA upgrade |
+| `msr1_ota/build_ota_images.sh` | Build v1 (green) and v2 (red) images |
+| `scripts/flash_xiao.sh` | Flash via debugger (OpenOCD) |
+| `msr1_ota/web_gui/app.py` | Web GUI — scan, upgrade (Serial/BLE/Debugger), read version, activate |

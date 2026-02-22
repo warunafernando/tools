@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartBall OTA Upgrader</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --success: #3fb950;
+      --warn: #d29922;
+      --danger: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1.5rem;
+      line-height: 1.5;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0 0 1.5rem;
+      color: var(--accent);
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .panel h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    button, select, input[type="file"] {
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    button:hover {
+      background: #21262d;
+      border-color: var(--accent);
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--bg);
+    }
+    button.primary:hover { filter: brightness(1.1); }
+    select { min-width: 200px; }
+    .result {
+      margin-top: 0.75rem;
+      padding: 0.75rem;
+      background: #0d1117;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .result.ok { border-left: 3px solid var(--success); }
+    .result.err { border-left: 3px solid var(--danger); }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+    .addr { font-family: monospace; color: var(--accent); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+    .led { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; box-shadow: 0 0 4px rgba(0,0,0,0.3); }
+    .led.on { background: var(--success); }
+    .led.off { background: var(--danger); }
+    .led-row { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 0.75rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>SmartBall OTA Upgrader</h1>
+
+  <div class="panel">
+    <div class="led-row">
+      <span><span id="led-bt" class="led off" title="Bluetooth adapter"></span> BT Enabled</span>
+      <span><span id="led-ball" class="led off" title="SmartBall connected"></span> SmartBall</span>
+    </div>
+    <h2>1. Scan & Connect to SmartBall</h2>
+    <div class="row">
+      <button id="scan-ble">Scan BLE</button>
+      <button id="disconnect-ble" style="display:none;">Disconnect</button>
+      <input type="text" id="ble-addr-input" placeholder="Or enter address / SmartBall" value="SmartBall" style="min-width:220px;padding:0.5rem;">
+      <span id="ble-status" class="muted"></span>
+    </div>
+    <div id="ble-result" class="result" style="display:none;"></div>
+    <p id="ble-addr-display" style="margin-top:0.5rem;font-size:0.9rem;"></p>
+  </div>
+
+  <div class="panel">
+    <h2>2. Scan for Debugger / Serial</h2>
+    <div class="row">
+      <button id="scan-debugger">Scan Debugger</button>
+      <button id="scan-serial">Scan Serial</button>
+      <button id="verify-port">Verify Port (read serial + part)</button>
+      <input type="text" id="serial-port-input" placeholder="Or enter port (e.g. /dev/ttyACM0)" value="/dev/ttyACM0" style="min-width:200px;padding:0.5rem;">
+    </div>
+    <div id="debugger-result" class="result" style="display:none;"></div>
+    <div id="serial-result" class="result" style="display:none;"></div>
+    <p id="serial-ports" style="margin-top:0.5rem;font-size:0.9rem;"></p>
+  </div>
+
+  <div class="panel">
+    <h2>3. Select Image (v1 / v2)</h2>
+    <div class="row">
+      <select id="image-select">
+        <option value="">-- Pick image --</option>
+      </select>
+      <input type="text" id="image-custom" placeholder="Or custom path" style="min-width:280px;padding:0.5rem;">
+    </div>
+    <p id="image-path" style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted);"></p>
+  </div>
+
+  <div class="panel">
+    <h2>4. Upgrade, Read Version & Activate</h2>
+    <div class="row" style="margin-bottom:0.75rem;">
+      <label>How:</label>
+      <select id="transport-select">
+        <option value="ble">BLE (SmartBall)</option>
+        <option value="serial">Serial</option>
+        <option value="debugger">Debugger</option>
+      </select>
+      <span id="transport-hint" style="font-size:0.85rem;color:var(--muted);"></span>
+    </div>
+    <div class="row">
+      <button id="upg-btn" class="primary">Upgrade</button>
+      <span style="font-size:0.85rem;color:var(--muted);" title="OTA uploads to secondary slot">→ Slot B</span>
+      <button id="read-version">Read Version</button>
+      <span id="activate-row" class="row" style="display:inline-flex;">
+        <button id="activate-image">Activate</button>
+        <select id="activate-slot" title="Slot to confirm">
+          <option value="A">Slot A (primary)</option>
+          <option value="B">Slot B (secondary)</option>
+        </select>
+      </span>
+    </div>
+    <p style="font-size:0.8rem;color:var(--muted);margin-top:0.5rem;">Upgrade: flash image. Read: smpmgr state-read. Activate: confirm image in selected slot.</p>
+    <div id="ops-result" class="result" style="display:none;"></div>
+  </div>
+
+  <script>
+    const bleAddr = { value: null };
+    const serialPort = { value: "/dev/ttyACM0" };
+    function getSerialPort() {
+      const manual = document.getElementById("serial-port-input").value.trim();
+      return manual || serialPort.value;
+    }
+    const imagePath = { value: null };
+    function getBleAddr() {
+      const manual = document.getElementById("ble-addr-input").value.trim();
+      return manual || bleAddr.value;
+    }
+
+    function setConnectedUI(connected, address) {
+      const scanBtn = document.getElementById("scan-ble");
+      const discBtn = document.getElementById("disconnect-ble");
+      const addrInput = document.getElementById("ble-addr-input");
+      if (connected && address) {
+        scanBtn.disabled = true;
+        discBtn.style.display = "inline-block";
+        bleAddr.value = address;
+        addrInput.value = address;
+        addrInput.disabled = true;
+        document.getElementById("ble-addr-display").innerHTML = `<span style="color:var(--success)">Connected to SmartBall:</span> <span class="addr">${address}</span>`;
+      } else {
+        scanBtn.disabled = false;
+        discBtn.style.display = "none";
+        addrInput.disabled = false;
+        document.getElementById("ble-addr-display").innerHTML = bleAddr.value ? `SmartBall: <span class="addr">${bleAddr.value}</span>` : "Using manual address (SmartBall or type BLE addr)";
+      }
+    }
+
+    async function api(url, method = "GET", body = null) {
+      const opts = { method };
+      if (body) {
+        opts.headers = { "Content-Type": "application/json" };
+        opts.body = JSON.stringify(body);
+      }
+      const r = await fetch(url, opts);
+      const raw = await r.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        data = { error: raw || r.statusText };
+      }
+      if (!r.ok) throw new Error(data.error || r.statusText);
+      return data;
+    }
+
+    function showResult(el, text, ok) {
+      el.textContent = text;
+      el.className = "result " + (ok ? "ok" : "err");
+      el.style.display = "block";
+    }
+
+    document.getElementById("scan-ble").onclick = async () => {
+      const btn = document.getElementById("scan-ble");
+      btn.disabled = true;
+      document.getElementById("ble-status").textContent = "Scanning...";
+      try {
+        const d = await api("/api/scan/ble", "POST");
+        updateLEDs(d.bt_enabled === true, d.connected === true);
+        const list = d.devices || [];
+        if (list.length) {
+          bleAddr.value = list[0].address;
+          if (d.connected && d.address) {
+            setConnectedUI(true, d.address);
+            showResult(document.getElementById("ble-result"), `Just connected to SmartBall: ${d.address}\nRead versions and upgrades will use this connection.`, true);
+          } else {
+            document.getElementById("ble-addr-input").value = bleAddr.value;
+            document.getElementById("ble-addr-display").innerHTML = `Found: <span class="addr">${bleAddr.value}</span> (connect failed, try again)`;
+            let detail = d.connect_error ? `\n\nReason: ${d.connect_error}` : "";
+            if (d.connect_error && d.connect_error.includes("InProgress")) detail = "\n\nBluetooth was busy. Wait a few seconds and try Scan again.";
+            showResult(document.getElementById("ble-result"), `Found: ${list[0].address} but connect failed. Try again or check device is in range.${detail}`, false);
+          }
+        } else {
+          document.getElementById("ble-addr-display").innerHTML = "Using manual address (SmartBall or type BLE addr)";
+          showResult(document.getElementById("ble-result"), d.error || "No SmartBall found. Use address field (e.g. SmartBall).", false);
+        }
+      } catch (e) {
+        showResult(document.getElementById("ble-result"), e.message, false);
+      }
+      btn.disabled = document.getElementById("disconnect-ble").style.display === "inline-block";
+      document.getElementById("ble-status").textContent = "";
+    };
+
+    document.getElementById("disconnect-ble").onclick = async () => {
+      try {
+        await api("/api/disconnect", "POST");
+        bleAddr.value = null;
+        setConnectedUI(false);
+        updateLEDs(true, false);
+        document.getElementById("ble-result").style.display = "none";
+      } catch (e) {}
+    };
+
+    document.getElementById("scan-debugger").onclick = async () => {
+      try {
+        const d = await api("/api/scan/debugger", "POST");
+        const el = document.getElementById("debugger-result");
+        let msg = [];
+        if (d.error) {
+          showResult(el, d.error, false);
+          return;
+        }
+        (d.probes || []).forEach(p => { msg.push(p.info || p.probe || ""); });
+        if (d.board_connected) msg.push("Board connected: Yes");
+        else if (d.detail) msg.push(d.detail);
+        showResult(el, msg.join("\n"), d.board_connected === true);
+      } catch (e) {
+        showResult(document.getElementById("debugger-result"), e.message, false);
+      }
+    };
+
+    document.getElementById("scan-serial").onclick = async () => {
+      try {
+        const d = await api("/api/scan/serial", "POST");
+        const el = document.getElementById("serial-result");
+        const pEl = document.getElementById("serial-ports");
+        const list = d.ports || [];
+        if (d.confirmed_port) {
+          serialPort.value = d.confirmed_port;
+          document.getElementById("serial-port-input").value = d.confirmed_port;
+          let msg = "Port: " + d.confirmed_port;
+          if (d.verified && d.serial_number && d.part_number) {
+            msg += "\nSerial: " + d.serial_number + "\nPart: " + d.part_number;
+            msg += "\n[Verified: opened port and read IDs]";
+          } else if (d.confirmed_reply) {
+            msg += "\n\n" + d.confirmed_reply;
+            msg += "\n[Port responds but no IDs - flash FW with device_mgmt to verify]";
+          }
+          showResult(el, msg, d.verified === true);
+          pEl.textContent = (d.verified ? "Verified: " : "Port: ") + d.confirmed_port + (d.serial_number ? " | " + d.serial_number : "");
+        } else if (list.length) {
+          serialPort.value = list[0].path;
+          document.getElementById("serial-port-input").value = serialPort.value;
+          showResult(el, (d.hint || "No SmartBall reply.") + "\nPorts seen: " + list.map(p => p.path).join(", ") + "\n\nClick Verify Port to check.", false);
+          pEl.textContent = "Using: " + serialPort.value + " (unverified)";
+        } else {
+          showResult(el, (d.hint || "No serial ports found. Connect XIAO via USB.") + "\n\nEnter /dev/ttyACM0 manually if needed.", false);
+          pEl.textContent = "Default: /dev/ttyACM0";
+        }
+      } catch (e) {
+        showResult(document.getElementById("serial-result"), e.message, false);
+      }
+    };
+
+    document.getElementById("verify-port").onclick = async () => {
+      const port = getSerialPort();
+      const el = document.getElementById("serial-result");
+      const pEl = document.getElementById("serial-ports");
+      el.style.display = "block";
+      el.className = "result";
+      el.textContent = "Verifying " + port + "...";
+      try {
+        const d = await api("/api/verify/port", "POST", { port });
+        if (d.verified && d.serial_number && d.part_number) {
+          showResult(el, "Port verified:\nSerial: " + d.serial_number + "\nPart: " + d.part_number, true);
+          pEl.textContent = "Verified: " + port + " | Serial: " + d.serial_number;
+        } else if (d.error) {
+          showResult(el, "Verify failed: " + d.error, false);
+          pEl.textContent = port + " (unverified)";
+        } else {
+          showResult(el, "No device identity response. Device may need updated firmware with device_mgmt.", false);
+          pEl.textContent = port + " (no identity)";
+        }
+      } catch (e) {
+        showResult(el, e.message, false);
+      }
+    };
+
+    async function loadImages() {
+      try {
+        const d = await api("/api/images");
+        const sel = document.getElementById("image-select");
+        sel.innerHTML = '<option value="">-- Pick image --</option>';
+        (d.images || []).forEach(img => {
+          const opt = document.createElement("option");
+          opt.value = img.path;
+          opt.textContent = `${img.label} (${img.name})`;
+          sel.appendChild(opt);
+        });
+      } catch (e) {}
+    }
+    loadImages();
+
+    function updateLEDs(btEnabled, connected) {
+      const ledBt = document.getElementById("led-bt");
+      const ledBall = document.getElementById("led-ball");
+      ledBt.className = "led " + (btEnabled ? "on" : "off");
+      ledBall.className = "led " + (connected ? "on" : "off");
+    }
+
+    const statusEl = document.getElementById("ble-status");
+    async function loadConnectionStatus() {
+      try {
+        let d = await api("/api/connection");
+        updateLEDs(d.bt_enabled === true, d.connected === true);
+        if (d.connected && d.address) {
+          setConnectedUI(true, d.address);
+          statusEl.textContent = "";
+          return;
+        }
+        setConnectedUI(false);
+        if (!d.bt_enabled) {
+          statusEl.textContent = "Starting BT...";
+          d = await api("/api/ensure-bt");
+          updateLEDs(d.bt_enabled === true, false);
+          if (!d.bt_enabled) {
+            statusEl.textContent = "BT failed to start";
+            return;
+          }
+        }
+        statusEl.textContent = "Connecting to SmartBall...";
+        d = await api("/api/check-cached");
+        updateLEDs(d.bt_enabled === true, d.connected === true);
+        if (d.connected && d.address) setConnectedUI(true, d.address);
+        statusEl.textContent = "";
+      } catch (e) {
+        updateLEDs(false, false);
+        statusEl.textContent = e.message || "Error";
+      }
+    }
+    loadConnectionStatus();
+
+    function updateImagePath() {
+      const custom = document.getElementById("image-custom").value.trim();
+      imagePath.value = custom || document.getElementById("image-select").value || null;
+      document.getElementById("image-path").textContent = imagePath.value || "";
+    }
+    document.getElementById("image-select").onchange = updateImagePath;
+    document.getElementById("image-custom").oninput = updateImagePath;
+
+    function getTransport() {
+      return document.getElementById("transport-select").value;
+    }
+    function setTransportHint() {
+      const t = getTransport();
+      const h = document.getElementById("transport-hint");
+      if (t === "ble") h.textContent = "Uses SmartBall";
+      else if (t === "serial") h.textContent = "Uses /dev/ttyACM*";
+      else h.textContent = "Uses debug probe (flash only)";
+    }
+    document.getElementById("transport-select").onchange = setTransportHint;
+    setTransportHint();
+
+    const opsResult = document.getElementById("ops-result");
+
+    document.getElementById("upg-btn").onclick = async () => {
+      const transport = getTransport();
+      const path = imagePath.value || document.getElementById("image-select").value;
+      if (!path) {
+        showResult(opsResult, "Select an image first.", false);
+        return;
+      }
+      if (transport === "ble" && !getBleAddr()) {
+        showResult(opsResult, "Scan for SmartBall first.", false);
+        return;
+      }
+      const body = { image: path, transport };
+      if (transport === "ble") body.address = getBleAddr();
+      if (transport === "serial") body.port = getSerialPort();
+      opsResult.textContent = "Upgrading... (may take 1–2 min for debugger)";
+      opsResult.className = "result";
+      opsResult.style.display = "block";
+      try {
+        const d = await api("/api/upgrade", "POST", body);
+        showResult(opsResult, (d.stdout || "") + (d.stderr || "") + (d.error || ""), d.ok);
+      } catch (e) {
+        showResult(opsResult, e.message, false);
+      }
+    };
+
+    document.getElementById("read-version").onclick = async () => {
+      const transport = getTransport();
+      if (transport === "debugger") {
+        showResult(opsResult, "Read Version uses BLE or Serial, not Debugger. Change transport.", false);
+        return;
+      }
+      const body = { transport };
+      if (transport === "ble") {
+        if (!getBleAddr()) { showResult(opsResult, "Scan for SmartBall first.", false); return; }
+        body.address = getBleAddr();
+      } else body.port = getSerialPort();
+      opsResult.textContent = "Reading...";
+      opsResult.className = "result";
+      opsResult.style.display = "block";
+      try {
+        const d = await api("/api/version/read", "POST", body);
+        showResult(opsResult, (d.stdout || "") + (d.stderr || "") + (d.error || ""), d.ok);
+      } catch (e) {
+        showResult(opsResult, e.message, false);
+      }
+    };
+
+    document.getElementById("activate-image").onclick = async () => {
+      const transport = getTransport();
+      if (transport === "debugger") {
+        showResult(opsResult, "Activate uses BLE or Serial, not Debugger. Change transport.", false);
+        return;
+      }
+      const slot = document.getElementById("activate-slot").value;
+      const body = { transport, slot };
+      if (transport === "ble") {
+        if (!getBleAddr()) { showResult(opsResult, "Scan for SmartBall first.", false); return; }
+        body.address = getBleAddr();
+      } else body.port = getSerialPort();
+      opsResult.textContent = `Activating slot ${slot}...`;
+      opsResult.className = "result";
+      opsResult.style.display = "block";
+      try {
+        const d = await api("/api/version/activate", "POST", body);
+        showResult(opsResult, (d.stdout || "") + (d.stderr || "") + (d.error || ""), d.ok);
+      } catch (e) {
+        showResult(opsResult, e.message, false);
+      }
+    };
+  </script>
+</body>
+</html>

@@ -14,16 +14,19 @@ DBUS_ENV = {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/var/run/dbus/system_bus_sock
 def run_upgrade(addr: str, img_path: str, timeout: int = 120, max_retries: int = 3) -> bool:
     """Run smpmgr upgrade. Retry on 'No Bluetooth adapters found' (BlueZ race)."""
     env = {**os.environ, **DBUS_ENV}
+    base = [SMPMGR, "--ble", addr, "--timeout", "90"]
     for attempt in range(max_retries):
+        subprocess.run(base + ["image", "erase", "1"], env=env, capture_output=True, timeout=30, cwd=TOOLS_DIR)
         r = subprocess.run(
-            [SMPMGR, "--ble", addr, "--timeout", "90", "upgrade", img_path],
+            base + ["upgrade", "--slot", "1", img_path],
             env=env, capture_output=True, text=True, timeout=timeout, cwd=TOOLS_DIR
         )
         if r.returncode == 0:
             return True
-        err = r.stderr or ""
+        err = (r.stderr or "") + (r.stdout or "")
         if ("No Bluetooth adapters found" in err or "device disconnected" in err
-                or "failed to discover" in err or "SMPTransportDisconnected" in err):
+                or "failed to discover" in err or "SMPTransportDisconnected" in err
+                or "NO_FREE_SLOT" in err):
             if attempt < max_retries - 1:
                 wait = 15 * (attempt + 1)
                 print(f"    Retry in {wait}s ...", flush=True)

@@ -1,0 +1,7 @@
+# Allow OTA web GUI to enable Bluetooth and stop BLE scan for mcumgr without password
+# Install: sudo cp sudoers_ble /etc/sudoers.d/ota-ble && sudo chmod 440 /etc/sudoers.d/ota-ble
+mini ALL=(ALL) NOPASSWD: /home/mini/tools/msr1_ota/web_gui/enable_bluetooth.sh
+mini ALL=(ALL) NOPASSWD: /home/mini/tools/msr1_ota/web_gui/stop_ble_for_mcumgr.sh
+mini ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart bluetooth.service
+mini ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop bluetooth-autoconnect.service
+mini ALL=(ALL) NOPASSWD: /usr/bin/systemctl start bluetooth-autoconnect.service
