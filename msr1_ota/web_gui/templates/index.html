@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartBall OTA Upgrader</title>
+  <title>SmartBall Debug GUI</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -17,318 +17,1213 @@
       --danger: #f85149;
     }
     * { box-sizing: border-box; }
-    body {
-      font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
-      background: var(--bg);
-      color: var(--text);
-      margin: 0;
-      padding: 1.5rem;
-      line-height: 1.5;
+    body { font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace; background: var(--bg); color: var(--text); margin: 0; padding: 1rem; line-height: 1.5; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1rem; color: var(--accent); }
+    .tabs { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+    .tab { padding: 0.5rem 1rem; cursor: pointer; border-radius: 6px 6px 0 0; background: transparent; color: var(--muted); border: 1px solid transparent; font-family: inherit; font-size: 0.85rem; }
+    .tab:hover { color: var(--text); background: #21262d; }
+    .tab.active { background: var(--panel); color: var(--accent); border-color: var(--border); border-bottom-color: var(--panel); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    .panel h2 { font-size: 0.85rem; font-weight: 600; margin: 0 0 0.75rem; color: var(--muted); text-transform: uppercase; }
+    button, select, input[type="text"], input[type="number"] {
+      font-family: inherit; font-size: 0.9rem; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--panel); color: var(--text); cursor: pointer; margin-right: 0.5rem; margin-bottom: 0.5rem;
     }
-    h1 {
-      font-size: 1.25rem;
-      font-weight: 600;
-      margin: 0 0 1.5rem;
-      color: var(--accent);
-    }
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-      margin-bottom: 1rem;
-    }
-    .panel h2 {
-      font-size: 0.85rem;
-      font-weight: 600;
-      margin: 0 0 0.75rem;
-      color: var(--muted);
-      text-transform: uppercase;
-    }
-    button, select, input[type="file"] {
-      font-family: inherit;
-      font-size: 0.9rem;
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--panel);
-      color: var(--text);
-      cursor: pointer;
-      margin-right: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-    button:hover {
-      background: #21262d;
-      border-color: var(--accent);
-    }
+    button:hover { background: #21262d; border-color: var(--accent); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: var(--bg);
-    }
-    button.primary:hover { filter: brightness(1.1); }
-    select { min-width: 200px; }
-    .result {
-      margin-top: 0.75rem;
-      padding: 0.75rem;
-      background: #0d1117;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    input[type="text"], input[type="number"] { min-width: 120px; cursor: text; }
+    .result { margin-top: 0.75rem; padding: 0.75rem; background: #0d1117; border-radius: 6px; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
     .result.ok { border-left: 3px solid var(--success); }
     .result.err { border-left: 3px solid var(--danger); }
     .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
     .addr { font-family: monospace; color: var(--accent); }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
     .led { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; box-shadow: 0 0 4px rgba(0,0,0,0.3); }
     .led.on { background: var(--success); }
     .led.off { background: var(--danger); }
     .led-row { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 0.75rem; font-size: 0.9rem; }
+    .btn-group { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.5rem; }
+    .cmd-btn { font-size: 0.8rem; padding: 0.4rem 0.7rem; }
+    .fetch-progress { display: none; margin-top: 0.75rem; padding: 0.75rem; background: #0d1117; border-radius: 6px; border-left: 3px solid var(--accent); }
+    .fetch-progress.active { display: block; }
+    .fetch-progress-text { font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .fetch-progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .fetch-progress-fill { height: 100%; background: var(--accent); border-radius: 3px; width: 0%; transition: width 0.3s ease; }
+    .status-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 24px; background: var(--panel); border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); padding: 0 1rem; display: flex; align-items: center; }
+    .status-bar.active { color: var(--accent); }
+    .status-bar.err { color: var(--danger); }
+    body { padding-bottom: 28px; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <h1>SmartBall OTA Upgrader</h1>
+  <h1>SmartBall Debug GUI</h1>
 
   <div class="panel">
     <div class="led-row">
-      <span><span id="led-bt" class="led off" title="Bluetooth adapter"></span> BT Enabled</span>
-      <span><span id="led-ball" class="led off" title="SmartBall connected"></span> SmartBall</span>
-    </div>
-    <h2>1. Scan & Connect to SmartBall</h2>
-    <div class="row">
-      <button id="scan-ble">Scan BLE</button>
-      <button id="disconnect-ble" style="display:none;">Disconnect</button>
-      <input type="text" id="ble-addr-input" placeholder="Or enter address / SmartBall" value="SmartBall" style="min-width:220px;padding:0.5rem;">
-      <span id="ble-status" class="muted"></span>
-    </div>
-    <div id="ble-result" class="result" style="display:none;"></div>
-    <p id="ble-addr-display" style="margin-top:0.5rem;font-size:0.9rem;"></p>
-  </div>
-
-  <div class="panel">
-    <h2>2. Scan for Debugger / Serial</h2>
-    <div class="row">
-      <button id="scan-debugger">Scan Debugger</button>
-      <button id="scan-serial">Scan Serial</button>
-      <button id="verify-port">Verify Port (read serial + part)</button>
-      <input type="text" id="serial-port-input" placeholder="Or enter port (e.g. /dev/ttyACM0)" value="/dev/ttyACM0" style="min-width:200px;padding:0.5rem;">
-    </div>
-    <div id="debugger-result" class="result" style="display:none;"></div>
-    <div id="serial-result" class="result" style="display:none;"></div>
-    <p id="serial-ports" style="margin-top:0.5rem;font-size:0.9rem;"></p>
-  </div>
-
-  <div class="panel">
-    <h2>3. Select Image (v1 / v2)</h2>
-    <div class="row">
-      <select id="image-select">
-        <option value="">-- Pick image --</option>
-      </select>
-      <input type="text" id="image-custom" placeholder="Or custom path" style="min-width:280px;padding:0.5rem;">
-    </div>
-    <p id="image-path" style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted);"></p>
-  </div>
-
-  <div class="panel">
-    <h2>4. Upgrade, Read Version & Activate</h2>
-    <div class="row" style="margin-bottom:0.75rem;">
-      <label>How:</label>
-      <select id="transport-select">
-        <option value="ble">BLE (SmartBall)</option>
-        <option value="serial">Serial</option>
-        <option value="debugger">Debugger</option>
-      </select>
-      <span id="transport-hint" style="font-size:0.85rem;color:var(--muted);"></span>
-    </div>
-    <div class="row">
-      <button id="upg-btn" class="primary">Upgrade</button>
-      <span style="font-size:0.85rem;color:var(--muted);" title="OTA uploads to secondary slot">→ Slot B</span>
-      <button id="read-version">Read Version</button>
-      <span id="activate-row" class="row" style="display:inline-flex;">
-        <button id="activate-image">Activate</button>
-        <select id="activate-slot" title="Slot to confirm">
-          <option value="A">Slot A (primary)</option>
-          <option value="B">Slot B (secondary)</option>
-        </select>
+      <span><span id="led-bt" class="led off" title="Bluetooth"></span> BT</span>
+      <span><span id="led-ball" class="led off" title="SmartBall"></span> SmartBall</span>
+      <span id="ble-addr-display" style="font-size:0.85rem;"></span>
+      <span style="margin-left:1rem;">
+        <button type="button" id="run-recording-btn" class="cmd-btn primary" title="Start recording (continuous, no trigger)">Run</button>
+        <button type="button" id="stop-recording-btn" class="cmd-btn" title="Stop recording" disabled>Stop</button>
       </span>
     </div>
-    <p style="font-size:0.8rem;color:var(--muted);margin-top:0.5rem;">Upgrade: flash image. Read: smpmgr state-read. Activate: confirm image in selected slot.</p>
-    <div id="ops-result" class="result" style="display:none;"></div>
+    <div class="row">
+      <button id="scan-ble">Scan BLE</button>
+      <input type="text" id="ble-addr-input" placeholder="BLE address (e.g. D0:8D:27:9F:56:14)" value="SmartBall" style="min-width:220px;">
+      <span style="font-size:0.8rem;color:var(--muted);">Or type address. Connection kept until OTA.</span>
+    </div>
+    <div id="ble-result" class="result" style="display:none;"></div>
   </div>
 
+  <div class="tabs">
+    <button class="tab active" data-tab="ota">OTA</button>
+    <button class="tab" data-tab="device">Device</button>
+    <button class="tab" data-tab="diag">Diagnostics</button>
+    <button class="tab" data-tab="config">Config</button>
+    <button class="tab" data-tab="recording">Recording</button>
+    <button class="tab" data-tab="shots">Shots</button>
+    <button class="tab" data-tab="data">Data & Plot</button>
+    <button class="tab" data-tab="chip">Chip access</button>
+    <button class="tab" data-tab="tests">BLE Tests</button>
+  </div>
+
+  <!-- OTA Tab -->
+  <div id="tab-ota" class="tab-content active">
+    <div class="panel">
+      <h2>Scan Debugger / Serial</h2>
+      <div class="row">
+        <button id="scan-debugger">Scan Debugger</button>
+        <button id="scan-serial">Scan Serial</button>
+        <button id="verify-port">Verify Port</button>
+        <input type="text" id="serial-port-input" placeholder="/dev/ttyACM0" value="/dev/ttyACM0" style="min-width:160px;">
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Image & Upgrade</h2>
+      <div class="row">
+        <select id="image-select"><option value="">-- Pick image --</option></select>
+        <input type="text" id="image-custom" placeholder="Or custom path" style="min-width:220px;">
+      </div>
+      <div class="row" style="margin-top:0.75rem;">
+        <select id="transport-select">
+          <option value="ble">BLE</option>
+          <option value="serial">Serial</option>
+          <option value="debugger">Debugger</option>
+        </select>
+        <button id="upg-btn" class="primary">Upgrade</button>
+        <button id="read-version">Read Version</button>
+        <button id="activate-image">Activate</button>
+        <select id="activate-slot"><option value="A">Slot A</option><option value="B">Slot B</option></select>
+      </div>
+      <div id="ops-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Device Tab -->
+  <div id="tab-device" class="tab-content">
+    <div class="panel">
+      <h2>Device Info (Binary Protocol)</h2>
+      <div class="btn-group">
+        <button class="cmd-btn" data-cmd="ID">CMD_ID</button>
+        <button class="cmd-btn" data-cmd="STATUS">CMD_STATUS</button>
+        <button class="cmd-btn" data-cmd="DIAG">CMD_DIAG</button>
+      </div>
+      <div id="device-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Diagnostics Tab -->
+  <div id="tab-diag" class="tab-content">
+    <div class="panel">
+      <h2>Diagnostics & Bus</h2>
+      <div class="btn-group">
+        <button class="cmd-btn" data-cmd="SELFTEST">SELFTEST</button>
+        <button class="cmd-btn" data-cmd="BUS_SCAN">BUS_SCAN</button>
+        <button class="cmd-btn" data-cmd="CLEAR_ERRORS">CLEAR_ERRORS</button>
+      </div>
+      <div id="diag-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Config Tab -->
+  <div id="tab-config" class="tab-content">
+    <div class="panel">
+      <h2>Config (key/value)</h2>
+      <div class="row" style="margin-bottom:0.5rem;flex-wrap:wrap;align-items:center;gap:0.5rem;">
+        <select id="cfg-key" style="min-width:140px;">
+          <option value="sample_rate">sample_rate</option>
+          <option value="rate_int">rate_int</option>
+          <option value="rate_lsm">rate_lsm</option>
+          <option value="gyro_fs_int">gyro_fs_int</option>
+          <option value="accel_fs_int">accel_fs_int</option>
+          <option value="gyro_fs_lsm">gyro_fs_lsm</option>
+          <option value="accel_fs_lsm">accel_fs_lsm</option>
+          <option value="event_mode">event_mode</option>
+          <option value="trigger_g">trigger_g</option>
+          <option value="__custom__">custom (type key)</option>
+        </select>
+        <input type="text" id="cfg-key-custom" placeholder="key" style="min-width:100px;display:none;">
+        <input type="text" id="cfg-val" placeholder="value (decimal or hex)" style="min-width:100px;" title="Decimal for known keys, hex (e.g. d000) for custom">
+        <span style="font-size:0.8rem;color:var(--muted);" id="cfg-val-hint">sample_rate: Hz</span>
+        <button class="cmd-btn" data-cmd="SET">SET</button>
+        <button type="button" class="cmd-btn" id="cfg-hex-to-dec" title="Convert hex → decimal">hex→dec</button>
+        <button type="button" class="cmd-btn" id="cfg-dec-to-hex" title="Convert decimal → hex">dec→hex</button>
+      </div>
+      <div class="row" style="margin:0.5rem 0;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+        <label style="font-size:0.9rem;">Preset:</label>
+        <select id="cfg-preset" style="min-width:200px;">
+          <option value="">— Select preset —</option>
+          <option value="standard">Standard (104 Hz, ±2000 dps, ±4g)</option>
+          <option value="high_rate">High Rate (416 Hz, ±2000 dps, ±4g)</option>
+          <option value="balanced">Balanced (208 Hz, ±2000 dps, ±4g)</option>
+          <option value="low_power">Low Power (52 Hz, ±2000 dps, ±4g)</option>
+          <option value="high_dynamic">High Dynamic Range (104 Hz, ±4000 dps, ±8g)</option>
+        </select>
+        <button type="button" class="cmd-btn primary" id="cfg-apply-preset">Apply preset</button>
+      </div>
+      <div class="btn-group">
+        <button class="cmd-btn" data-cmd="GET_CFG">GET_CFG</button>
+        <button class="cmd-btn" data-cmd="SAVE_CFG">SAVE_CFG</button>
+        <button class="cmd-btn" data-cmd="LOAD_CFG">LOAD_CFG</button>
+        <button class="cmd-btn" data-cmd="FACTORY_RESET">FACTORY_RESET</button>
+      </div>
+      <p style="font-size:0.8rem;color:var(--muted);margin:0.25rem 0;">Click a key from GET_CFG result to fill SET form. Presets apply all rate/range keys at once (and SAVE). Rate keys: Hz. gyro_fs: dps. accel_fs: ±g.</p>
+      <div id="config-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Recording Tab -->
+  <div id="tab-recording" class="tab-content">
+    <div class="panel">
+      <h2>Recording</h2>
+      <div class="btn-group">
+        <button class="cmd-btn" data-cmd="START_RECORD">START_RECORD</button>
+        <button class="cmd-btn" data-cmd="STOP_RECORD">STOP_RECORD</button>
+      </div>
+      <p style="font-size:0.85rem;color:var(--muted);margin:0.5rem 0;">Use CMD_STATUS to see samples_recorded.</p>
+      <div id="recording-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Shots Tab -->
+  <div id="tab-shots" class="tab-content">
+    <div class="panel">
+      <h2>Shot Management</h2>
+      <div class="row" style="margin-bottom:0.5rem;">
+        <input type="number" id="shot-id" placeholder="Shot ID" style="min-width:100px;">
+        <button class="cmd-btn" data-cmd="GET_SHOT">GET_SHOT</button>
+        <button class="cmd-btn" data-cmd="DEL_SHOT">DEL_SHOT</button>
+      </div>
+      <div class="btn-group">
+        <button class="cmd-btn" data-cmd="LIST_SHOTS">LIST_SHOTS</button>
+        <button class="cmd-btn" data-cmd="FORMAT_STORAGE">FORMAT</button>
+      </div>
+      <div id="shots-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Data & Plot Tab -->
+  <div id="tab-data" class="tab-content">
+    <div class="panel">
+      <h2>Shot data & processing</h2>
+      <div class="row" style="margin-bottom:0.5rem;flex-wrap:wrap;align-items:center;gap:0.5rem;">
+        <button type="button" class="cmd-btn primary" id="data-refresh-shots">Refresh shot list</button>
+        <button type="button" class="cmd-btn" id="data-clear-shots" title="Format storage: erase all shots on device">Clear all shots</button>
+        <select id="data-shot-select" style="min-width:140px;">
+          <option value="">— Select shot —</option>
+        </select>
+        <button type="button" class="cmd-btn primary" id="data-fetch-plot">Fetch & Plot</button>
+        <button type="button" class="cmd-btn" id="data-fetch-last" title="Fetch last/pending shot (no ID required)">Fetch last</button>
+      </div>
+      <div id="data-meta" class="result" style="display:none;font-size:0.8rem;"></div>
+      <div id="data-fetch-progress" class="fetch-progress">
+        <div class="fetch-progress-text" id="data-fetch-progress-text">Fetching shot...</div>
+        <div class="fetch-progress-bar"><div class="fetch-progress-fill" id="data-fetch-progress-fill"></div></div>
+      </div>
+      <div style="margin-top:1rem;position:relative;">
+        <div style="margin-bottom:0.5rem;flex-wrap:wrap;display:flex;gap:0.75rem 1rem;align-items:center;">
+          <span style="font-size:0.8rem;color:var(--muted);">Plot:</span>
+          <label><input type="checkbox" id="data-plot-accel" checked> Accel</label>
+          <label><input type="checkbox" id="data-plot-gyro" checked> Gyro</label>
+          <label><input type="checkbox" id="data-plot-axis-x" checked> X</label>
+          <label><input type="checkbox" id="data-plot-axis-y" checked> Y</label>
+          <label><input type="checkbox" id="data-plot-axis-z" checked> Z</label>
+          <span style="margin-left:0.5rem;font-size:0.75rem;color:var(--muted);">|</span>
+          <label><input type="checkbox" id="data-plot-internal" checked> Internal IMU</label>
+          <label><input type="checkbox" id="data-plot-lsm" checked> IMU</label>
+          <label><input type="checkbox" id="data-plot-impact" checked> Impact detect</label>
+          <button type="button" class="cmd-btn" id="data-plot-redraw" style="margin-left:0.5rem;">Redraw</button>
+        </div>
+        <canvas id="data-chart" style="max-height:400px;width:100%;"></canvas>
+      </div>
+      <div id="data-result" class="result" style="display:none;margin-top:0.5rem;"></div>
+      <div id="data-debug" style="display:none;margin-top:0.75rem;padding:0.75rem;background:#0d1117;border-radius:6px;border:1px solid var(--border);font-size:0.75rem;">
+        <h3 style="margin:0 0 0.5rem;color:var(--muted);font-size:0.8rem;">Debug — IMU data check</h3>
+        <div id="data-debug-content" style="white-space:pre-wrap;font-family:monospace;"></div>
+        <p style="margin:0.5rem 0 0;color:var(--muted);">If IMU (external) all zeros but Impact has data: (1) run <strong>BUS_SCAN</strong> in Device tab — LSM6 WHO_AM_I 0x6C/0x6A, ADXL DEVID 0xE5. (2) If wiring reversed (LSM6 on D3, ADXL on D2), build with overlay <code>xiao_ble_sense_swapped_cs.overlay</code>.</p>
+      </div>
+      <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+        <h3 style="font-size:0.85rem;margin:0 0 0.5rem;color:var(--muted);">Save dataset</h3>
+        <div class="row" style="flex-wrap:wrap;gap:0.5rem;align-items:center;">
+          <input type="text" id="data-save-name" placeholder="Dataset name" style="min-width:160px;">
+          <button type="button" class="cmd-btn primary" id="data-save-clear">Save & clear from device</button>
+          <span id="data-save-hint" style="font-size:0.75rem;color:var(--muted);">(After fetch, enter name and save)</span>
+        </div>
+      </div>
+      <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);">
+        <h3 style="font-size:0.85rem;margin:0 0 0.5rem;color:var(--muted);">Saved datasets</h3>
+        <div class="row" style="flex-wrap:wrap;gap:0.5rem;align-items:center;">
+          <button type="button" class="cmd-btn" id="data-refresh-saved">Refresh</button>
+          <select id="data-saved-select" style="min-width:200px;">
+            <option value="">— Select saved —</option>
+          </select>
+          <button type="button" class="cmd-btn primary" id="data-load-saved">Load & Plot</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chip access Tab -->
+  <div id="tab-chip" class="tab-content">
+    <div class="panel">
+      <h2>SPI register read/write (BLE)</h2>
+      <p style="font-size:0.8rem;color:var(--muted);margin:0 0 0.75rem;">Read or write any register on LSM6 (cs=0) or ADXL (cs=1). Reg in hex (e.g. 0x0F).</p>
+      <div class="row" style="flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
+        <label style="font-size:0.85rem;">Chip:</label>
+        <select id="chip-cs">
+          <option value="0">LSM6 (cs=0)</option>
+          <option value="1">ADXL (cs=1)</option>
+        </select>
+        <label style="font-size:0.85rem;">Reg:</label>
+        <input type="text" id="chip-reg" placeholder="0x0F" value="0x0F" style="width:70px;">
+        <label style="font-size:0.85rem;">Read len:</label>
+        <input type="number" id="chip-read-len" min="1" max="240" value="1" style="width:60px;">
+        <button type="button" class="cmd-btn primary" id="chip-read-btn">Read</button>
+      </div>
+      <div class="row" style="flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
+        <label style="font-size:0.85rem;">Write data (hex):</label>
+        <input type="text" id="chip-write-data" placeholder="00 01 02" style="min-width:200px;">
+        <button type="button" class="cmd-btn" id="chip-write-btn">Write</button>
+      </div>
+      <div id="chip-result" class="result" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- BLE Tests Tab -->
+  <div id="tab-tests" class="tab-content">
+    <div class="panel">
+      <h2>Run All BLE Unit Tests (22 tests)</h2>
+      <button id="run-ble-tests" class="primary">Run All Tests</button>
+      <div id="tests-result" class="result" style="display:none;max-height:400px;overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  <div id="page-status-bar" class="status-bar">Ready</div>
   <script>
     const bleAddr = { value: null };
     const serialPort = { value: "/dev/ttyACM0" };
-    function getSerialPort() {
-      const manual = document.getElementById("serial-port-input").value.trim();
-      return manual || serialPort.value;
-    }
     const imagePath = { value: null };
+
     function getBleAddr() {
       const manual = document.getElementById("ble-addr-input").value.trim();
       return manual || bleAddr.value;
     }
-
-    function setConnectedUI(connected, address) {
-      const scanBtn = document.getElementById("scan-ble");
-      const discBtn = document.getElementById("disconnect-ble");
-      const addrInput = document.getElementById("ble-addr-input");
-      if (connected && address) {
-        scanBtn.disabled = true;
-        discBtn.style.display = "inline-block";
-        bleAddr.value = address;
-        addrInput.value = address;
-        addrInput.disabled = true;
-        document.getElementById("ble-addr-display").innerHTML = `<span style="color:var(--success)">Connected to SmartBall:</span> <span class="addr">${address}</span>`;
-      } else {
-        scanBtn.disabled = false;
-        discBtn.style.display = "none";
-        addrInput.disabled = false;
-        document.getElementById("ble-addr-display").innerHTML = bleAddr.value ? `SmartBall: <span class="addr">${bleAddr.value}</span>` : "Using manual address (SmartBall or type BLE addr)";
-      }
+    function getSerialPort() {
+      return document.getElementById("serial-port-input").value.trim() || serialPort.value;
     }
 
-    async function api(url, method = "GET", body = null) {
+    // Tabs
+    document.querySelectorAll(".tab").forEach(t => {
+      t.onclick = () => {
+        document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+        document.querySelectorAll(".tab-content").forEach(x => x.classList.remove("active"));
+        t.classList.add("active");
+        document.getElementById("tab-" + t.dataset.tab).classList.add("active");
+      };
+    });
+
+    // Binary command buttons
+    document.querySelectorAll(".cmd-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const cmd = btn.dataset.cmd;
+        const addr = getBleAddr();
+        if (!addr) {
+          showBinaryResult(cmd, "Scan for SmartBall first.", false);
+          return;
+        }
+        const resultEl = document.querySelector(`#tab-${btn.closest(".tab-content").id.replace("tab-","")} .result`);
+        resultEl.textContent = `Sending ${cmd}...`;
+        resultEl.className = "result";
+        resultEl.style.display = "block";
+        let payload = "";
+        if (cmd === "SET") {
+          const key = document.getElementById("cfg-key")?.value?.trim();
+          const val = document.getElementById("cfg-val")?.value?.trim();
+          if (!key || !val) { showEl(resultEl, "SET needs key and value (hex).", false); return; }
+          const klen = key.length + 1;
+          const vbytes = hexToBytes(val);
+          payload = uint8(klen) + uint8(vbytes.length) + strToBytes(key + "\0") + vbytes;
+        } else if (cmd === "GET_SHOT" || cmd === "DEL_SHOT") {
+          const id = document.getElementById("shot-id")?.value;
+          if (!id) { showEl(resultEl, "Enter shot ID.", false); return; }
+          payload = uint32(parseInt(id, 10));
+        }
+        try {
+          const d = await api("/api/binary/send", "POST", { address: addr, cmd, payload });
+          showEl(resultEl, d.response || d.error, d.ok);
+        } catch (e) {
+          showEl(resultEl, e.message, false);
+        }
+      };
+    });
+    function uint8(v) { return Array.from(new Uint8Array([v])).map(x=>x.toString(16).padStart(2,"0")).join(""); }
+    function uint32(v) { const b = new ArrayBuffer(4); new DataView(b).setUint32(0,v,true); return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join(""); }
+    function hexToBytes(h) { h = h.replace(/\s/g,""); const a=[]; for(let i=0;i<h.length;i+=2) a.push(parseInt(h.substr(i,2),16)); return String.fromCharCode(...a); }
+    function strToBytes(s) { return Array.from(s).map(c=>c.charCodeAt(0).toString(16).padStart(2,"0")).join(""); }
+    function showEl(el, text, ok) { el.textContent = text; el.className = "result " + (ok ? "ok" : "err"); el.style.display = "block"; }
+
+    function showBinaryResult(panel, text, ok) {
+      const el = document.getElementById(panel + "-result");
+      if (el) showEl(el, text, ok);
+    }
+
+    async function api(url, method = "GET", body = null, timeoutMs = 0) {
       const opts = { method };
-      if (body) {
-        opts.headers = { "Content-Type": "application/json" };
-        opts.body = JSON.stringify(body);
+      if (body) { opts.headers = { "Content-Type": "application/json" }; opts.body = JSON.stringify(body); }
+      if (timeoutMs > 0) {
+        const ac = new AbortController();
+        opts.signal = ac.signal;
+        setTimeout(() => ac.abort(), timeoutMs);
       }
       const r = await fetch(url, opts);
       const raw = await r.text();
       let data;
-      try {
-        data = JSON.parse(raw);
-      } catch (_) {
-        data = { error: raw || r.statusText };
-      }
+      try { data = JSON.parse(raw); } catch (_) { data = { error: raw || r.statusText }; }
       if (!r.ok) throw new Error(data.error || r.statusText);
       return data;
     }
 
-    function showResult(el, text, ok) {
-      el.textContent = text;
-      el.className = "result " + (ok ? "ok" : "err");
+    function setConnectedUI(connected, address, foundButNotConnected) {
+      const scanBtn = document.getElementById("scan-ble");
+      const addrInput = document.getElementById("ble-addr-input");
+      if (connected && address) {
+        scanBtn.disabled = true;
+        bleAddr.value = address;
+        addrInput.value = address;
+        addrInput.disabled = true;
+        document.getElementById("ble-addr-display").innerHTML = `<span style="color:var(--success)">Connected:</span> <span class="addr">${address}</span>`;
+      } else if (foundButNotConnected) {
+        scanBtn.disabled = false;
+        addrInput.disabled = false;
+        bleAddr.value = foundButNotConnected;
+        addrInput.value = foundButNotConnected;
+        document.getElementById("ble-addr-display").innerHTML = `Found <span class="addr">${foundButNotConnected}</span> — connect failed. <button type="button" class="cmd-btn" onclick="document.getElementById('scan-ble').click()" style="margin:0 0.25rem;padding:0.2rem 0.5rem;">Scan BLE</button>`;
+      } else {
+        scanBtn.disabled = false;
+        addrInput.disabled = false;
+        document.getElementById("ble-addr-display").innerHTML = bleAddr.value ? `Addr: <span class="addr">${bleAddr.value}</span>` : "Searching for SmartBall…";
+      }
+    }
+
+    function updateLEDs(btEnabled, connected) {
+      document.getElementById("led-bt").className = "led " + (btEnabled ? "on" : "off");
+      document.getElementById("led-ball").className = "led " + (connected ? "on" : "off");
+    }
+
+    function getCfgKey() {
+      const sel = document.getElementById("cfg-key");
+      if (sel.value === "__custom__") return document.getElementById("cfg-key-custom").value.trim();
+      return sel.value;
+    }
+    function valToHex(key, valStr) {
+      valStr = valStr.replace(/\s/g, "").toLowerCase();
+      if (key === "sample_rate" || key === "rate_int" || key === "rate_lsm") {
+        const n = parseInt(valStr, 10);
+        if (!isNaN(n) && n >= 0 && n <= 65535) {
+          const b = new ArrayBuffer(2);
+          new DataView(b).setUint16(0, n, true);
+          return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+        }
+      }
+      if (key === "gyro_fs_int" || key === "gyro_fs_lsm") {
+        const n = parseInt(valStr, 10);
+        if (!isNaN(n) && n >= 0 && n <= 65535) {
+          const b = new ArrayBuffer(2);
+          new DataView(b).setUint16(0, n, true);
+          return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+        }
+      }
+      if (key === "accel_fs_int" || key === "accel_fs_lsm") {
+        const n = parseInt(valStr, 10);
+        if (!isNaN(n) && n >= 0 && n <= 255) return n.toString(16).padStart(2, "0");
+      }
+      if (key === "event_mode" || key === "trigger_g") {
+        const n = parseInt(valStr, 10);
+        if (!isNaN(n) && n >= 0 && n <= 255) return n.toString(16).padStart(2, "0");
+      }
+      if (/^[0-9a-f]+$/.test(valStr) && valStr.length % 2 === 0) return valStr;
+      return null;
+    }
+    document.getElementById("cfg-key").onchange = () => {
+      const v = document.getElementById("cfg-key").value;
+      document.getElementById("cfg-key-custom").style.display = v === "__custom__" ? "inline-block" : "none";
+      const hints = { sample_rate: "Hz (e.g. 104)", rate_int: "Hz (internal IMU)", rate_lsm: "Hz (LSM6DSOX)", gyro_fs_int: "dps (e.g. 2000)", accel_fs_int: "±g (e.g. 4)", gyro_fs_lsm: "dps (e.g. 2000)", accel_fs_lsm: "±g (e.g. 4)", event_mode: "0=normal 1=event", trigger_g: "0-255" };
+      document.getElementById("cfg-val-hint").textContent = v === "__custom__" ? "hex" : (hints[v] || "hex");
+    };
+
+    const PRESETS = {
+      standard: { sample_rate: 104, rate_int: 104, rate_lsm: 104, gyro_fs_int: 2000, accel_fs_int: 4, gyro_fs_lsm: 2000, accel_fs_lsm: 4 },
+      high_rate: { sample_rate: 416, rate_int: 416, rate_lsm: 416, gyro_fs_int: 2000, accel_fs_int: 4, gyro_fs_lsm: 2000, accel_fs_lsm: 4 },
+      balanced: { sample_rate: 208, rate_int: 208, rate_lsm: 208, gyro_fs_int: 2000, accel_fs_int: 4, gyro_fs_lsm: 2000, accel_fs_lsm: 4 },
+      low_power: { sample_rate: 52, rate_int: 52, rate_lsm: 52, gyro_fs_int: 2000, accel_fs_int: 4, gyro_fs_lsm: 2000, accel_fs_lsm: 4 },
+      high_dynamic: { sample_rate: 104, rate_int: 104, rate_lsm: 104, gyro_fs_int: 4000, accel_fs_int: 8, gyro_fs_lsm: 4000, accel_fs_lsm: 8 }
+    };
+    document.getElementById("cfg-apply-preset").onclick = async () => {
+      const presetId = document.getElementById("cfg-preset").value;
+      if (!presetId || !PRESETS[presetId]) {
+        showEl(document.getElementById("config-result"), "Select a preset first.", false);
+        return;
+      }
+      const addr = getBleAddr();
+      if (!addr) { showEl(document.getElementById("config-result"), "Scan for SmartBall first.", false); return; }
+      const el = document.getElementById("config-result");
+      el.textContent = "Applying preset...";
+      el.className = "result";
+      el.style.display = "block";
+      const cfg = PRESETS[presetId];
+      const entries = Object.entries(cfg);
+      try {
+        for (const [key, val] of entries) {
+          const hexVal = valToHex(key, String(val));
+          if (!hexVal) { showEl(el, "Failed to encode " + key + "=" + val, false); return; }
+          const vbytes = [];
+          for (let i = 0; i < hexVal.length; i += 2) vbytes.push(parseInt(hexVal.substr(i, 2), 16));
+          const klen = key.length + 1;
+          const payload = [klen, vbytes.length, ...key.split("").map(c=>c.charCodeAt(0)), 0, ...vbytes]
+            .map(x=>x.toString(16).padStart(2,"0")).join("");
+          const d = await api("/api/binary/send", "POST", { address: addr, cmd: "SET", payload });
+          if (!d.ok) { showEl(el, d.response || d.error || "SET failed for " + key, false); return; }
+        }
+        const save = await api("/api/binary/send", "POST", { address: addr, cmd: "SAVE_CFG", payload: "" });
+        showEl(el, save.ok ? ("Preset applied and saved. " + (save.response || "")) : (save.response || save.error || "Save failed"), save.ok);
+        if (save.ok) document.getElementById("cfg-preset").value = "";
+      } catch (e) { showEl(el, e.message, false); }
+    };
+    document.getElementById("cfg-hex-to-dec").onclick = () => {
+      const h = document.getElementById("cfg-val").value.replace(/\s/g, "").toLowerCase();
+      if (!/^[0-9a-f]+$/.test(h) || h.length % 2) return;
+      const bytes = [];
+      for (let i = 0; i < h.length; i += 2) bytes.push(parseInt(h.substr(i, 2), 16));
+      const n = bytes.length === 1 ? bytes[0] : bytes.length === 2 ? bytes[0] | (bytes[1]<<8) : bytes[0] | (bytes[1]<<8) | (bytes[2]<<16);
+      document.getElementById("cfg-val").value = n;
+    };
+    document.getElementById("cfg-dec-to-hex").onclick = () => {
+      const n = parseInt(document.getElementById("cfg-val").value, 10);
+      if (isNaN(n) || n < 0) return;
+      const len = n <= 255 ? 1 : n <= 65535 ? 2 : 4;
+      const b = new ArrayBuffer(len);
+      const dv = new DataView(b);
+      if (len === 1) dv.setUint8(0, n); else if (len === 2) dv.setUint16(0, n, true); else dv.setUint32(0, n, true);
+      document.getElementById("cfg-val").value = Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+    };
+    document.querySelectorAll(".cmd-btn[data-cmd='SET']").forEach(btn => {
+      btn.onclick = async () => {
+        const key = getCfgKey();
+        const valStr = document.getElementById("cfg-val").value.trim().replace(/\s/g, "");
+        if (!key) {
+          showEl(document.getElementById("config-result"), "SET needs key.", false);
+          return;
+        }
+        let hexVal = valToHex(key, valStr);
+        if (hexVal === null && /^[0-9a-f]+$/i.test(valStr) && valStr.length % 2 === 0) hexVal = valStr.toLowerCase();
+        if (!hexVal) {
+          showEl(document.getElementById("config-result"), "Invalid value. Use decimal for known keys or hex (e.g. d000).", false);
+          return;
+        }
+        const vbytes = [];
+        for (let i = 0; i < hexVal.length; i += 2) vbytes.push(parseInt(hexVal.substr(i, 2), 16));
+        const k = key;
+        const klen = k.length + 1;
+        const payload = [klen, vbytes.length, ...k.split("").map(c=>c.charCodeAt(0)), 0, ...vbytes]
+          .map(x=>x.toString(16).padStart(2,"0")).join("");
+        const addr = getBleAddr();
+        if (!addr) { showEl(document.getElementById("config-result"), "Scan first.", false); return; }
+        const el = document.getElementById("config-result");
+        el.textContent = "Sending SET...";
+        el.className = "result";
+        el.style.display = "block";
+        try {
+          const d = await api("/api/binary/send", "POST", { address: addr, cmd: "SET", payload });
+          showEl(el, d.response || d.error, d.ok);
+        } catch (e) { showEl(el, e.message, false); }
+      };
+    });
+
+    // GET_SHOT / DEL_SHOT need shot_id as 4-byte LE hex
+    document.querySelectorAll(".cmd-btn[data-cmd='GET_SHOT'], .cmd-btn[data-cmd='DEL_SHOT']").forEach(btn => {
+      const cmd = btn.dataset.cmd;
+      btn.onclick = async () => {
+        const id = document.getElementById("shot-id")?.value;
+        if (!id) {
+          showEl(document.getElementById("shots-result"), `Enter shot ID for ${cmd}.`, false);
+          return;
+        }
+        const v = parseInt(id, 10);
+        const b = new ArrayBuffer(4);
+        new DataView(b).setUint32(0, v, true);
+        const payload = Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+        const addr = getBleAddr();
+        if (!addr) { showEl(document.getElementById("shots-result"), "Scan first.", false); return; }
+        const el = document.getElementById("shots-result");
+        el.textContent = `Sending ${cmd}...`;
+        el.className = "result";
+        el.style.display = "block";
+        try {
+          const d = await api("/api/binary/send", "POST", { address: addr, cmd, payload });
+          showEl(el, d.response || d.error, d.ok);
+        } catch (e) { showEl(el, e.message, false); }
+      };
+    });
+
+    function makeConfigClickable(el, text) {
+      const lines = text.split("\n");
+      const out = [];
+      for (const line of lines) {
+        const m = line.match(/^\s+([\w_]+):\s*([0-9a-f]+)(?:\s*\([^)]+\))?/i);
+        if (m) {
+          const key = m[1], hexVal = m[2];
+          let dispVal = hexVal;
+          if ((key === "sample_rate" || key === "rate_int" || key === "rate_lsm" || key === "gyro_fs_int" || key === "gyro_fs_lsm") && hexVal.length === 4) {
+            const n = parseInt(hexVal.substr(0,2), 16) | (parseInt(hexVal.substr(2,2), 16) << 8);
+            dispVal = n + " (hex " + hexVal + ")";
+          } else if ((key === "accel_fs_int" || key === "accel_fs_lsm" || key === "event_mode" || key === "trigger_g") && hexVal.length === 2) {
+            if (key === "event_mode") dispVal = (parseInt(hexVal, 16) ? "1" : "0") + " (hex " + hexVal + ")";
+            else dispVal = parseInt(hexVal, 16) + " (hex " + hexVal + ")";
+          }
+          const span = document.createElement("span");
+          span.style.cursor = "pointer";
+          span.style.textDecoration = "underline";
+          span.style.color = "var(--accent)";
+          span.textContent = line.trim();
+          span.title = "Click to fill SET form: " + key + " = " + dispVal;
+          span.onclick = () => {
+            const sel = document.getElementById("cfg-key");
+            const known = ["sample_rate", "rate_int", "rate_lsm", "gyro_fs_int", "gyro_fs_lsm", "accel_fs_int", "accel_fs_lsm", "event_mode", "trigger_g"];
+            if (known.includes(key)) {
+              sel.value = key;
+              document.getElementById("cfg-key-custom").style.display = "none";
+              if (key === "sample_rate" || key === "rate_int" || key === "rate_lsm" || key === "gyro_fs_int" || key === "gyro_fs_lsm") {
+                document.getElementById("cfg-val").value = hexVal.length === 4 ? (parseInt(hexVal.substr(0,2), 16) | (parseInt(hexVal.substr(2,2), 16) << 8)) : hexVal;
+              } else if (key === "accel_fs_int" || key === "accel_fs_lsm" || key === "trigger_g") {
+                document.getElementById("cfg-val").value = parseInt(hexVal, 16);
+              } else {
+                document.getElementById("cfg-val").value = key === "event_mode" ? (parseInt(hexVal, 16) ? "1" : "0") : parseInt(hexVal, 16);
+              }
+            } else {
+              sel.value = "__custom__";
+              document.getElementById("cfg-key-custom").style.display = "inline-block";
+              document.getElementById("cfg-key-custom").value = key;
+              document.getElementById("cfg-val").value = hexVal;
+            }
+            const hintMap = { sample_rate: "Hz", rate_int: "Hz", rate_lsm: "Hz", gyro_fs_int: "dps", gyro_fs_lsm: "dps", accel_fs_int: "±g", accel_fs_lsm: "±g", event_mode: "0|1", trigger_g: "0-255" };
+            document.getElementById("cfg-val-hint").textContent = known.includes(key) ? (hintMap[key] || "hex") : "hex";
+          };
+          out.push(span);
+          out.push(document.createTextNode("\n"));
+        } else {
+          out.push(document.createTextNode(line + "\n"));
+        }
+      }
+      el.innerHTML = "";
+      out.forEach(n => el.appendChild(n));
+    }
+    document.querySelectorAll(".cmd-btn[data-cmd='GET_CFG']").forEach(btn => {
+      btn.onclick = async () => {
+        const addr = getBleAddr();
+        if (!addr) { showEl(document.getElementById("config-result"), "Scan first.", false); return; }
+        const el = document.getElementById("config-result");
+        el.textContent = "Sending GET_CFG (all)...";
+        el.className = "result";
+        el.style.display = "block";
+        try {
+          const d = await api("/api/binary/send", "POST", { address: addr, cmd: "GET_CFG" });
+          if (d.ok && d.response && d.response.includes("--- Config ---")) {
+            makeConfigClickable(el, d.response);
+            el.className = "result ok";
+          } else {
+            showEl(el, d.response || d.error, d.ok);
+          }
+        } catch (e) { showEl(el, e.message, false); }
+      };
+    });
+
+    // Data & Plot tab
+    let dataChart = null;
+    let dataShotsList = [];
+    let lastFetchedRawHex = null;
+    let lastFetchedShotId = null;
+    let lastFetchedSampleRate = null;
+    let lastFetchedCount = null;
+    let lastParsedData = null;
+    function parseSvtshot3(hexPayload) {
+      if (!hexPayload || typeof hexPayload !== "string") return null;
+      const hex = hexPayload.replace(/[^0-9a-fA-F]/g, "").replace(/(..).?$/, "$1"); // strip non-hex, ensure even length
+      const pairs = hex.match(/.{1,2}/g);
+      if (!pairs || pairs.length < 18) return null;
+      const buf = new Uint8Array(pairs.map(x=>parseInt(x,16)));
+      if (buf.length < 36) return null;
+      const magic = String.fromCharCode(...buf.slice(0,8));
+      if (magic !== "SVTSHOT3") return null;
+      const sampleRate = new DataView(buf.buffer).getUint16(10, true);
+      const count = new DataView(buf.buffer).getUint32(12, true);
+      const imuMask = buf[17];
+      const sampleSize = (imuMask & 0x06) ? 68 : 28;  // LSM6 or ADXL present = multi
+      const headerSize = 24, footerSize = 4;  // packed header (magic8+ver1+pad1+rate2+count4+mask1+mask1+pad2+crc4)
+      const expectedLen = headerSize + count * sampleSize + footerSize;
+      if (buf.length < expectedLen) return null;
+      const dv = new DataView(buf.buffer);
+      const samples = [];
+      for (let i = 0; i < count; i++) {
+        const off = headerSize + i * sampleSize;
+        const t_ms = dv.getUint32(off, true);
+        const s = { t_ms };
+        if (sampleSize === 28) {
+          s.ax = dv.getFloat32(off + 4, true); s.ay = dv.getFloat32(off + 8, true); s.az = dv.getFloat32(off + 12, true);
+          s.gx = dv.getFloat32(off + 16, true); s.gy = dv.getFloat32(off + 20, true); s.gz = dv.getFloat32(off + 24, true);
+        } else {
+          s.i_ax = dv.getFloat32(off + 8, true); s.i_ay = dv.getFloat32(off + 12, true); s.i_az = dv.getFloat32(off + 16, true);
+          s.i_gx = dv.getFloat32(off + 20, true); s.i_gy = dv.getFloat32(off + 24, true); s.i_gz = dv.getFloat32(off + 28, true);
+          if (sampleSize === 68) {
+            s.l_ax = dv.getFloat32(off + 32, true); s.l_ay = dv.getFloat32(off + 36, true); s.l_az = dv.getFloat32(off + 40, true);
+            s.l_gx = dv.getFloat32(off + 44, true); s.l_gy = dv.getFloat32(off + 48, true); s.l_gz = dv.getFloat32(off + 52, true);
+            s.h_ax = dv.getFloat32(off + 56, true); s.h_ay = dv.getFloat32(off + 60, true); s.h_az = dv.getFloat32(off + 64, true);
+          }
+        }
+        samples.push(s);
+      }
+      return { sampleRate, count, imuMask, sampleSize, samples };
+    }
+    function updateDebugPanel(parsed) {
+      const el = document.getElementById("data-debug");
+      const content = document.getElementById("data-debug-content");
+      if (!parsed || !parsed.samples.length) { el.style.display = "none"; return; }
+      const m = parsed.imuMask || 0;
+      const multi = parsed.sampleSize === 68;
+      let lines = ["imu_source_mask: 0x" + m.toString(16) + " (1=Internal, 2=LSM6, 4=ADXL)"];
+      const s0 = parsed.samples[0];
+      lines.push("");
+      lines.push("First sample:");
+      if (parsed.sampleSize === 28) {
+        lines.push("  Internal: ax=" + (s0.ax?.toFixed(3) ?? "?") + " ay=" + (s0.ay?.toFixed(3) ?? "?") + " az=" + (s0.az?.toFixed(3) ?? "?") + "  gx=" + (s0.gx?.toFixed(4) ?? "?") + " gy=" + (s0.gy?.toFixed(4) ?? "?") + " gz=" + (s0.gz?.toFixed(4) ?? "?"));
+      } else {
+        lines.push("  Internal: i_ax=" + (s0.i_ax?.toFixed(3) ?? "?") + " i_ay=" + (s0.i_ay?.toFixed(3) ?? "?") + " i_az=" + (s0.i_az?.toFixed(3) ?? "?") + "  i_gx=" + (s0.i_gx?.toFixed(4) ?? "?") + " i_gy=" + (s0.i_gy?.toFixed(4) ?? "?") + " i_gz=" + (s0.i_gz?.toFixed(4) ?? "?"));
+        if (multi) {
+          lines.push("  IMU (ext): l_ax=" + (s0.l_ax?.toFixed(3) ?? "?") + " l_ay=" + (s0.l_ay?.toFixed(3) ?? "?") + " l_az=" + (s0.l_az?.toFixed(3) ?? "?") + "  l_gx=" + (s0.l_gx?.toFixed(4) ?? "?") + " l_gy=" + (s0.l_gy?.toFixed(4) ?? "?") + " l_gz=" + (s0.l_gz?.toFixed(4) ?? "?"));
+          lines.push("  Impact:   h_ax=" + (s0.h_ax?.toFixed(3) ?? "?") + " h_ay=" + (s0.h_ay?.toFixed(3) ?? "?") + " h_az=" + (s0.h_az?.toFixed(3) ?? "?"));
+        }
+      }
+      function minMax(arr, key) {
+        if (!arr.length) return null;
+        let v = arr[0][key];
+        if (v == null) return null;
+        let min = v, max = v;
+        for (let i = 1; i < arr.length; i++) {
+          v = arr[i][key];
+          if (v != null) { if (v < min) min = v; if (v > max) max = v; }
+        }
+        return { min, max };
+      }
+      lines.push("");
+      lines.push("Min / Max (if constant or all zero, channel may be dead or unconnected):");
+      if (parsed.sampleSize === 68) {
+        ["i_ax","i_ay","i_az","i_gx","i_gy","i_gz"].forEach(k => {
+          const r = minMax(parsed.samples, k);
+          if (r) lines.push("  " + k + ": " + r.min.toFixed(4) + " / " + r.max.toFixed(4) + (r.min === r.max ? " (constant)" : ""));
+        });
+        ["l_ax","l_ay","l_az","l_gx","l_gy","l_gz"].forEach(k => {
+          const r = minMax(parsed.samples, k);
+          if (r) lines.push("  " + k + ": " + r.min.toFixed(4) + " / " + r.max.toFixed(4) + (r.min === r.max && r.min === 0 ? " (all zero)" : r.min === r.max ? " (constant)" : ""));
+        });
+        ["h_ax","h_ay","h_az"].forEach(k => {
+          const r = minMax(parsed.samples, k);
+          if (r) lines.push("  " + k + ": " + r.min.toFixed(4) + " / " + r.max.toFixed(4) + (r.min === r.max && r.min === 0 ? " (all zero)" : r.min === r.max ? " (constant)" : ""));
+        });
+        lines.push("");
+        lines.push("Compare Internal vs IMU (impact ignored):");
+        function mean(arr, key) {
+          const v = arr.filter(s => s[key] != null).map(s => s[key]);
+          return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+        }
+        const axes = [["Accel X","i_ax","l_ax"],["Accel Y","i_ay","l_ay"],["Accel Z","i_az","l_az"],["Gyro X","i_gx","l_gx"],["Gyro Y","i_gy","l_gy"],["Gyro Z","i_gz","l_gz"]];
+        axes.forEach(([label, ik, lk]) => {
+          const ri = minMax(parsed.samples, ik);
+          const rl = minMax(parsed.samples, lk);
+          const mi = mean(parsed.samples, ik);
+          const ml = mean(parsed.samples, lk);
+          if (ri && rl) {
+            const diff = (mi != null && ml != null) ? (mi - ml).toFixed(4) : "—";
+            lines.push("  " + label + ": Internal μ=" + (mi != null ? mi.toFixed(4) : "—") + "  IMU μ=" + (ml != null ? ml.toFixed(4) : "—") + "  diff(μ)=" + diff);
+          }
+        });
+      } else {
+        ["ax","ay","az","gx","gy","gz"].forEach(k => {
+          const r = minMax(parsed.samples, k);
+          if (r) lines.push("  " + k + ": " + r.min.toFixed(4) + " / " + r.max.toFixed(4) + (r.min === r.max ? " (constant)" : ""));
+        });
+      }
+      content.textContent = lines.join("\n");
       el.style.display = "block";
     }
+    function buildChartFromParsed(parsed) {
+      const showAccel = document.getElementById("data-plot-accel").checked;
+      const showGyro = document.getElementById("data-plot-gyro").checked;
+      const showX = document.getElementById("data-plot-axis-x").checked;
+      const showY = document.getElementById("data-plot-axis-y").checked;
+      const showZ = document.getElementById("data-plot-axis-z").checked;
+      const showInt = document.getElementById("data-plot-internal").checked;
+      const showLsm = document.getElementById("data-plot-lsm").checked;
+      const showImpact = document.getElementById("data-plot-impact").checked;
+      const labels = parsed.samples.map(s => (s.t_ms / 1000).toFixed(3));
+      const datasets = [];
+      const hasMulti = parsed.sampleSize === 68;
+      if (showInt) {
+        if (hasMulti) {
+          if (showAccel && showX) datasets.push({ label: "Internal IMU ax", data: parsed.samples.map(s=>s.i_ax), borderColor:"#f85149", fill:false, tension:0.1 });
+          if (showAccel && showY) datasets.push({ label: "Internal IMU ay", data: parsed.samples.map(s=>s.i_ay), borderColor:"#3fb950", fill:false, tension:0.1 });
+          if (showAccel && showZ) datasets.push({ label: "Internal IMU az", data: parsed.samples.map(s=>s.i_az), borderColor:"#58a6ff", fill:false, tension:0.1 });
+          if (showGyro && showX) datasets.push({ label: "Internal IMU gx", data: parsed.samples.map(s=>s.i_gx), borderColor:"#d29922", borderDash:[4,2], fill:false, tension:0.1 });
+          if (showGyro && showY) datasets.push({ label: "Internal IMU gy", data: parsed.samples.map(s=>s.i_gy), borderColor:"#a371f7", borderDash:[4,2], fill:false, tension:0.1 });
+          if (showGyro && showZ) datasets.push({ label: "Internal IMU gz", data: parsed.samples.map(s=>s.i_gz), borderColor:"#79c0ff", borderDash:[4,2], fill:false, tension:0.1 });
+        } else {
+          if (showAccel && showX) datasets.push({ label: "IMU ax", data: parsed.samples.map(s=>s.ax), borderColor:"#f85149", fill:false, tension:0.1 });
+          if (showAccel && showY) datasets.push({ label: "IMU ay", data: parsed.samples.map(s=>s.ay), borderColor:"#3fb950", fill:false, tension:0.1 });
+          if (showAccel && showZ) datasets.push({ label: "IMU az", data: parsed.samples.map(s=>s.az), borderColor:"#58a6ff", fill:false, tension:0.1 });
+          if (showGyro && showX) datasets.push({ label: "IMU gx", data: parsed.samples.map(s=>s.gx), borderColor:"#d29922", borderDash:[4,2], fill:false, tension:0.1 });
+          if (showGyro && showY) datasets.push({ label: "IMU gy", data: parsed.samples.map(s=>s.gy), borderColor:"#a371f7", borderDash:[4,2], fill:false, tension:0.1 });
+          if (showGyro && showZ) datasets.push({ label: "IMU gz", data: parsed.samples.map(s=>s.gz), borderColor:"#79c0ff", borderDash:[4,2], fill:false, tension:0.1 });
+        }
+      }
+      if (hasMulti && showLsm) {
+        if (showAccel && showX) datasets.push({ label: "IMU ax", data: parsed.samples.map(s=>s.l_ax||0), borderColor:"#ff7b72", fill:false, tension:0.1 });
+        if (showAccel && showY) datasets.push({ label: "IMU ay", data: parsed.samples.map(s=>s.l_ay||0), borderColor:"#56d364", fill:false, tension:0.1 });
+        if (showAccel && showZ) datasets.push({ label: "IMU az", data: parsed.samples.map(s=>s.l_az||0), borderColor:"#7ee787", fill:false, tension:0.1 });
+        if (showGyro && showX) datasets.push({ label: "IMU gx", data: parsed.samples.map(s=>s.l_gx||0), borderColor:"#e3b341", borderDash:[4,2], fill:false, tension:0.1 });
+        if (showGyro && showY) datasets.push({ label: "IMU gy", data: parsed.samples.map(s=>s.l_gy||0), borderColor:"#bc8cff", borderDash:[4,2], fill:false, tension:0.1 });
+        if (showGyro && showZ) datasets.push({ label: "IMU gz", data: parsed.samples.map(s=>s.l_gz||0), borderColor:"#a5d6ff", borderDash:[4,2], fill:false, tension:0.1 });
+      }
+      if (hasMulti && showImpact && showAccel) {
+        if (showX) datasets.push({ label: "Impact detect ax", data: parsed.samples.map(s=>s.h_ax||0), borderColor:"#f0883e", fill:false, tension:0.1 });
+        if (showY) datasets.push({ label: "Impact detect ay", data: parsed.samples.map(s=>s.h_ay||0), borderColor:"#db6d28", fill:false, tension:0.1 });
+        if (showZ) datasets.push({ label: "Impact detect az", data: parsed.samples.map(s=>s.h_az||0), borderColor:"#bd5d1e", fill:false, tension:0.1 });
+      }
+      if (dataChart) dataChart.destroy();
+      const ctx = document.getElementById("data-chart").getContext("2d");
+      dataChart = new Chart(ctx, {
+        type: "line",
+        data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: { legend: { position: "top" } },
+          scales: {
+            x: { title: { display: true, text: "Time (s)" } },
+            y: { title: { display: true, text: showAccel && !showGyro ? "Accel (m/s²)" : showGyro && !showAccel ? "Gyro (rad/s)" : "Value" } }
+          }
+        }
+      });
+      return datasets.length;
+    }
+    function uint32Hex(v) {
+      const b = new ArrayBuffer(4);
+      new DataView(b).setUint32(0, v, true);
+      return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+    }
+    document.getElementById("data-clear-shots").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) { showEl(document.getElementById("data-result"), "Scan first.", false); return; }
+      if (!confirm("Clear all shots on device? (Format storage – cannot undo)")) return;
+      const el = document.getElementById("data-result");
+      el.style.display = "block";
+      el.textContent = "Clearing...";
+      try {
+        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "FORMAT_STORAGE" });
+        if (!d.ok) { showEl(el, d.error || "Format failed", false); return; }
+        showEl(el, "Storage cleared. Refreshing list.", true);
+        dataShotsList = [];
+        document.getElementById("data-shot-select").innerHTML = '<option value="">— Select shot —</option>';
+        document.getElementById("data-refresh-shots").click();
+      } catch (e) { showEl(el, e.message, false); }
+    };
+    document.getElementById("data-refresh-shots").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) { showEl(document.getElementById("data-result"), "Scan first.", false); setStatusBar("Scan first.", false); return; }
+      const el = document.getElementById("data-result");
+      el.textContent = "Fetching shot list...";
+      setStatusBar("Fetching shot list...");
+      el.className = "result";
+      el.style.display = "block";
+      try {
+        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "LIST_SHOTS" }, 20000);
+        if (!d.ok || !d.raw_hex) {
+          const msg = d.error || d.response || "No raw data";
+          showEl(el, msg, false);
+          setStatusBar(msg, false);
+          return;
+        }
+        const buf = new Uint8Array(d.raw_hex.match(/.{1,2}/g).map(x=>parseInt(x,16)));
+        if (buf.length < 4 || buf[0] !== 0x8C) {
+          showEl(el, "Invalid RSP_SHOT_LIST", false);
+          setStatusBar("Invalid shot list response.", false);
+          return;
+        }
+        const n = buf[3];
+        const sel = document.getElementById("data-shot-select");
+        sel.innerHTML = '<option value="">— Select shot —</option>';
+        dataShotsList = [];
+        for (let i = 0; i < n && 4 + (i + 1) * 8 <= buf.length; i++) {
+          const sid = new DataView(buf.buffer).getUint32(4 + i * 8, true);
+          const sz = new DataView(buf.buffer).getUint32(4 + i * 8 + 4, true);
+          dataShotsList.push({ id: sid, size: sz });
+          const opt = document.createElement("option");
+          opt.value = sid;
+          opt.dataset.size = sz;
+          opt.textContent = `id=${sid} (${sz} B)`;
+          sel.appendChild(opt);
+        }
+        showEl(el, `Found ${n} shot(s). Select and click Fetch & Plot.`, true);
+        setStatusBar(`Found ${n} shot(s).`);
+      } catch (e) {
+        const msg = e.name === "AbortError" ? "Request timed out. Is the device on and in range?" : e.message;
+        showEl(el, msg, false);
+        setStatusBar(msg, false);
+      }
+    };
+    let dataFetchProgressInterval = null;
+    function startFetchProgress(size) {
+      const progEl = document.getElementById("data-fetch-progress");
+      const textEl = document.getElementById("data-fetch-progress-text");
+      const fillEl = document.getElementById("data-fetch-progress-fill");
+      progEl.classList.add("active");
+      const chunkSize = 240;
+      const chunks = Math.ceil(size / chunkSize);
+      const estSec = Math.max(5, Math.ceil(chunks * 0.4));
+      const sizeKb = (size / 1024).toFixed(1);
+      textEl.textContent = `Fetching shot (${sizeKb} KB, ${chunks} chunks) — estimated ${estSec} s...`;
+      fillEl.style.width = "0%";
+      const start = Date.now();
+      dataFetchProgressInterval = setInterval(() => {
+        const elapsed = (Date.now() - start) / 1000;
+        const pct = Math.min(95, Math.round((elapsed / estSec) * 100));
+        fillEl.style.width = pct + "%";
+      }, 200);
+    }
+    function stopFetchProgress() {
+      if (dataFetchProgressInterval) { clearInterval(dataFetchProgressInterval); dataFetchProgressInterval = null; }
+      const progEl = document.getElementById("data-fetch-progress");
+      const fillEl = document.getElementById("data-fetch-progress-fill");
+      progEl.classList.remove("active");
+      fillEl.style.width = "0%";
+    }
+    async function doFetchAndPlot(shotIdOrZero) {
+      const addr = getBleAddr();
+      if (!addr) { showEl(document.getElementById("data-result"), "Scan first.", false); setStatusBar("Scan first.", false); return; }
+      const el = document.getElementById("data-result");
+      el.textContent = "";
+      el.className = "result";
+      el.style.display = "block";
+      setStatusBar("Preparing...");
+      try {
+        let shotId = shotIdOrZero || 0;
+        let size = 0;
+        if (shotId === 0) {
+          if (dataShotsList.length === 0) {
+            setStatusBar("Getting shot list...");
+            const listR = await api("/api/binary/send", "POST", { address: addr, cmd: "LIST_SHOTS" });
+            if (!listR.ok || !listR.raw_hex) { showEl(el, listR.error || "No shot list", false); setStatusBar(listR.error || "Shot list failed.", false); return; }
+            const lbuf = new Uint8Array(listR.raw_hex.match(/.{1,2}/g).map(x=>parseInt(x,16)));
+            if (lbuf.length < 4 || lbuf[0] !== 0x8C) { showEl(el, "Invalid RSP_SHOT_LIST", false); setStatusBar("Invalid shot list.", false); return; }
+            const n = lbuf[3];
+            dataShotsList = [];
+            for (let i = 0; i < n && 4 + (i + 1) * 8 <= lbuf.length; i++) {
+              dataShotsList.push({
+                id: new DataView(lbuf.buffer).getUint32(4 + i * 8, true),
+                size: new DataView(lbuf.buffer).getUint32(4 + i * 8 + 4, true)
+              });
+            }
+            const sel = document.getElementById("data-shot-select");
+            sel.innerHTML = '<option value="">— Select shot —</option>';
+            dataShotsList.forEach(s => {
+              const opt = document.createElement("option");
+              opt.value = s.id; opt.dataset.size = s.size;
+              opt.textContent = `id=${s.id} (${s.size} B)`;
+              sel.appendChild(opt);
+            });
+          }
+          if (dataShotsList.length === 0) { showEl(el, "No shots recorded.", false); setStatusBar("No shots recorded.", false); return; }
+          const last = dataShotsList[dataShotsList.length - 1];
+          shotId = last.id;
+          size = last.size;
+        } else {
+          const opt = document.querySelector(`#data-shot-select option[value="${shotId}"]`);
+          size = opt ? parseInt(opt.dataset.size || "0", 10) : 0;
+          if (!size) {
+            const found = dataShotsList.find(s => s.id === shotId);
+            size = found ? found.size : 0;
+          }
+        }
+        if (!size) { showEl(el, "Unknown shot size. Click Refresh shot list first.", false); setStatusBar("Unknown shot size. Refresh shot list first.", false); return; }
+        setStatusBar("Fetching shot from device...");
+        startFetchProgress(size);
+        let d;
+        try {
+          d = await api("/api/shot/fetch", "POST", { address: addr, shot_id: shotId, size });
+        } finally {
+          stopFetchProgress();
+        }
+        if (!d.ok || !d.raw_hex) { showEl(el, d.error || "No raw data", false); setStatusBar(d.error || "Fetch failed.", false); return; }
+        setStatusBar("Parsing data...");
+        const payloadHex = d.raw_hex;
+        const parsed = parseSvtshot3(payloadHex);
+        if (!parsed) { showEl(el, "Failed to parse SVTSHOT3", false); setStatusBar("Parse failed.", false); return; }
+        lastFetchedRawHex = payloadHex;
+        lastFetchedShotId = shotId;
+        lastFetchedSampleRate = parsed.sampleRate;
+        lastFetchedCount = parsed.count;
+        lastParsedData = parsed;
+        document.getElementById("data-meta").textContent = `Rate: ${parsed.sampleRate} Hz | Samples: ${parsed.count} | Size: ${parsed.sampleSize} B/sample`;
+        document.getElementById("data-meta").style.display = "block";
+        setStatusBar("Building chart...");
+        const numSeries = buildChartFromParsed(parsed);
+        updateDebugPanel(parsed);
+        showEl(el, `Plotted ${parsed.count} samples.`, true);
+        setStatusBar(`Done — Plotted ${parsed.count} samples from ${numSeries} series.`);
+      } catch (e) {
+        stopFetchProgress();
+        showEl(el, e.message, false);
+        setStatusBar(e.message, false);
+      }
+    }
+    document.getElementById("data-fetch-plot").onclick = () => {
+      const shotId = document.getElementById("data-shot-select").value;
+      if (!shotId) { showEl(document.getElementById("data-result"), "Select a shot first, or use Fetch last.", false); setStatusBar("Select a shot first.", false); return; }
+      doFetchAndPlot(parseInt(shotId, 10));
+    };
+    document.getElementById("data-fetch-last").onclick = () => doFetchAndPlot(0);
+
+    async function refreshSavedList() {
+      try {
+        const d = await api("/api/saved-shots", "GET");
+        const sel = document.getElementById("data-saved-select");
+        sel.innerHTML = '<option value="">— Select saved —</option>';
+        if (d.ok && d.items && d.items.length) {
+          d.items.forEach(it => {
+            const opt = document.createElement("option");
+            opt.value = it.id;
+            opt.textContent = (it.name || it.id) + (it.created_at ? " (" + it.created_at + ")" : "");
+            sel.appendChild(opt);
+          });
+        }
+      } catch (e) {}
+    }
+    document.getElementById("data-refresh-saved").onclick = () => {
+      setStatusBar("Loading saved list...");
+      refreshSavedList().then(() => setStatusBar(""));
+    };
+
+    document.getElementById("data-save-clear").onclick = async () => {
+      if (!lastFetchedRawHex || lastFetchedShotId == null) {
+        showEl(document.getElementById("data-result"), "Fetch a shot first, then save.", false);
+        setStatusBar("Fetch a shot first.", false);
+        return;
+      }
+      const name = document.getElementById("data-save-name").value.trim() || ("Shot_" + lastFetchedShotId);
+      const addr = getBleAddr();
+      setStatusBar("Saving & clearing from device...");
+      try {
+        const d = await api("/api/saved-shots", "POST", {
+          raw_hex: lastFetchedRawHex,
+          shot_id: lastFetchedShotId,
+          name,
+          address: addr,
+          sample_rate: lastFetchedSampleRate,
+          count: lastFetchedCount
+        });
+        if (!d.ok) { showEl(document.getElementById("data-result"), d.error || "Save failed", false); setStatusBar(d.error, false); return; }
+        const savedShotId = lastFetchedShotId;
+        lastFetchedRawHex = null;
+        lastFetchedShotId = null;
+        if (d.deleted) {
+          dataShotsList = dataShotsList.filter(s => s.id !== savedShotId);
+          const opt = document.querySelector('#data-shot-select option[value="' + savedShotId + '"]');
+          if (opt) opt.remove();
+        }
+        showEl(document.getElementById("data-result"), `Saved as "${name}".` + (d.deleted ? " Shot cleared from device." : (d.delete_error ? " (Clear failed: " + d.delete_error + ")" : "")), true);
+        setStatusBar(`Saved "${name}".`);
+        refreshSavedList();
+      } catch (e) { showEl(document.getElementById("data-result"), e.message, false); setStatusBar(e.message, false); }
+    };
+
+    document.getElementById("data-load-saved").onclick = async () => {
+      const sid = document.getElementById("data-saved-select").value;
+      if (!sid) { showEl(document.getElementById("data-result"), "Select a saved dataset.", false); setStatusBar("Select a saved dataset.", false); return; }
+      const el = document.getElementById("data-result");
+      setStatusBar("Loading saved dataset...");
+      try {
+        const d = await api("/api/saved-shots/" + sid, "GET");
+        if (!d.ok || !d.raw_hex) { showEl(el, d.error || "Load failed", false); setStatusBar(d.error, false); return; }
+        const parsed = parseSvtshot3(d.raw_hex);
+        if (!parsed) { showEl(el, "Parse failed", false); setStatusBar("Parse failed.", false); return; }
+        lastParsedData = parsed;
+        document.getElementById("data-meta").textContent = (d.name ? d.name + " | " : "") + `Rate: ${parsed.sampleRate} Hz | Samples: ${parsed.count}`;
+        document.getElementById("data-meta").style.display = "block";
+        const numSeries = buildChartFromParsed(parsed);
+        updateDebugPanel(parsed);
+        showEl(el, `Plotted ${parsed.count} samples from saved dataset.`, true);
+        setStatusBar(`Loaded "${d.name || sid}".`);
+      } catch (e) { showEl(el, e.message, false); setStatusBar(e.message, false); }
+    };
+
+    document.querySelector(".tab[data-tab='data']").addEventListener("click", () => refreshSavedList());
+
+    document.getElementById("data-plot-redraw").onclick = () => {
+      if (!lastParsedData) { showEl(document.getElementById("data-result"), "Fetch or load a dataset first.", false); return; }
+      const numSeries = buildChartFromParsed(lastParsedData);
+      showEl(document.getElementById("data-result"), `Redrawn with ${numSeries} series.`, true);
+      setStatusBar("Redrawn.");
+    };
+
+    // Chip access tab
+    const chipResultEl = document.getElementById("chip-result");
+    document.getElementById("chip-read-btn").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) { showEl(chipResultEl, "Scan for SmartBall first.", false); return; }
+      const regStr = document.getElementById("chip-reg").value.trim();
+      const reg = regStr.startsWith("0x") ? parseInt(regStr, 16) : parseInt(regStr, 10);
+      const len = parseInt(document.getElementById("chip-read-len").value, 10) || 1;
+      if (isNaN(reg) || reg < 0 || reg > 255) { showEl(chipResultEl, "Reg: hex (0x0F) or decimal 0–255.", false); return; }
+      if (len < 1 || len > 240) { showEl(chipResultEl, "Read len 1–240.", false); return; }
+      const cs = parseInt(document.getElementById("chip-cs").value, 10);
+      showEl(chipResultEl, "Reading...", true);
+      try {
+        const d = await api("/api/chip/read", "POST", { address: addr, cs, reg, len });
+        showEl(chipResultEl, d.ok ? `Read ${d.data_hex.length / 2} byte(s): ${d.data_hex}` : (d.error || "Read failed"), !!d.ok);
+      } catch (e) { showEl(chipResultEl, e.message, false); }
+    };
+    document.getElementById("chip-write-btn").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) { showEl(chipResultEl, "Scan for SmartBall first.", false); return; }
+      const regStr = document.getElementById("chip-reg").value.trim();
+      const reg = regStr.startsWith("0x") ? parseInt(regStr, 16) : parseInt(regStr, 10);
+      const dataHex = (document.getElementById("chip-write-data").value || "").replace(/\s/g, "");
+      if (isNaN(reg) || reg < 0 || reg > 255) { showEl(chipResultEl, "Reg: hex (0x0F) or decimal 0–255.", false); return; }
+      if (dataHex && !/^[0-9a-fA-F]+$/.test(dataHex)) { showEl(chipResultEl, "Write data: hex only (e.g. 00 01 02).", false); return; }
+      const cs = parseInt(document.getElementById("chip-cs").value, 10);
+      showEl(chipResultEl, "Writing...", true);
+      try {
+        const d = await api("/api/chip/write", "POST", { address: addr, cs, reg, data_hex: dataHex });
+        showEl(chipResultEl, d.ok ? "Write OK." : (d.error || "Write failed"), !!d.ok);
+      } catch (e) { showEl(chipResultEl, e.message, false); }
+    };
+
+    // Load saved list on page load (Data tab)
+    setTimeout(() => refreshSavedList(), 500);
+
+    // Other cmd-btn without special payload
+    document.querySelectorAll(".cmd-btn").forEach(btn => {
+      if (["SET","GET_CFG","GET_SHOT","DEL_SHOT"].includes(btn.dataset.cmd)) return;
+      if (btn.onclick) return; // already set
+      btn.onclick = async () => {
+        const cmd = btn.dataset.cmd;
+        const addr = getBleAddr();
+        if (!addr) {
+          const tab = btn.closest(".tab-content");
+          const resId = tab?.querySelector(".result")?.id || "device-result";
+          showEl(document.getElementById(resId), "Scan first.", false);
+          return;
+        }
+        const tabId = btn.closest(".tab-content").id.replace("tab-","");
+        const resMap = { device: "device", diag: "diag", config: "config", recording: "recording", shots: "shots" };
+        const resId = (resMap[tabId] || "device") + "-result";
+        const el = document.getElementById(resId);
+        el.textContent = `Sending ${cmd}...`;
+        el.className = "result";
+        el.style.display = "block";
+        try {
+          const d = await api("/api/binary/send", "POST", { address: addr, cmd });
+          showEl(el, d.response || d.error, d.ok);
+        } catch (e) { showEl(el, e.message, false); }
+      };
+    });
+
+    document.getElementById("run-ble-tests").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) { showEl(document.getElementById("tests-result"), "Scan for SmartBall first.", false); return; }
+      const el = document.getElementById("tests-result");
+      el.textContent = "Running 22 BLE tests...";
+      el.className = "result";
+      el.style.display = "block";
+      try {
+        const d = await api("/api/binary/tests", "POST", { address: addr });
+        showEl(el, (d.log || "") + "\n\n" + (d.error || "") + "\n--- " + (d.passed||0) + "/" + (d.total||22) + " passed ---", d.ok);
+      } catch (e) { showEl(el, e.message, false); }
+    };
 
     document.getElementById("scan-ble").onclick = async () => {
       const btn = document.getElementById("scan-ble");
       btn.disabled = true;
-      document.getElementById("ble-status").textContent = "Scanning...";
       try {
         const d = await api("/api/scan/ble", "POST");
         updateLEDs(d.bt_enabled === true, d.connected === true);
-        const list = d.devices || [];
-        if (list.length) {
-          bleAddr.value = list[0].address;
+        if (d.devices?.length) {
+          bleAddr.value = d.devices[0].address;
           if (d.connected && d.address) {
             setConnectedUI(true, d.address);
-            showResult(document.getElementById("ble-result"), `Just connected to SmartBall: ${d.address}\nRead versions and upgrades will use this connection.`, true);
+            showEl(document.getElementById("ble-result"), "Connected: " + d.address, true);
           } else {
             document.getElementById("ble-addr-input").value = bleAddr.value;
-            document.getElementById("ble-addr-display").innerHTML = `Found: <span class="addr">${bleAddr.value}</span> (connect failed, try again)`;
-            let detail = d.connect_error ? `\n\nReason: ${d.connect_error}` : "";
-            if (d.connect_error && d.connect_error.includes("InProgress")) detail = "\n\nBluetooth was busy. Wait a few seconds and try Scan again.";
-            showResult(document.getElementById("ble-result"), `Found: ${list[0].address} but connect failed. Try again or check device is in range.${detail}`, false);
+            setConnectedUI(false);
+            showEl(document.getElementById("ble-result"), "Found but connect failed: " + (d.connect_error || "retry"), false);
           }
         } else {
-          document.getElementById("ble-addr-display").innerHTML = "Using manual address (SmartBall or type BLE addr)";
-          showResult(document.getElementById("ble-result"), d.error || "No SmartBall found. Use address field (e.g. SmartBall).", false);
+          showEl(document.getElementById("ble-result"), d.error || "No SmartBall found", false);
         }
       } catch (e) {
-        showResult(document.getElementById("ble-result"), e.message, false);
+        showEl(document.getElementById("ble-result"), e.message, false);
       }
-      btn.disabled = document.getElementById("disconnect-ble").style.display === "inline-block";
-      document.getElementById("ble-status").textContent = "";
-    };
-
-    document.getElementById("disconnect-ble").onclick = async () => {
-      try {
-        await api("/api/disconnect", "POST");
-        bleAddr.value = null;
-        setConnectedUI(false);
-        updateLEDs(true, false);
-        document.getElementById("ble-result").style.display = "none";
-      } catch (e) {}
+      btn.disabled = d.connected === true;
     };
 
     document.getElementById("scan-debugger").onclick = async () => {
       try {
         const d = await api("/api/scan/debugger", "POST");
-        const el = document.getElementById("debugger-result");
-        let msg = [];
-        if (d.error) {
-          showResult(el, d.error, false);
-          return;
-        }
-        (d.probes || []).forEach(p => { msg.push(p.info || p.probe || ""); });
-        if (d.board_connected) msg.push("Board connected: Yes");
-        else if (d.detail) msg.push(d.detail);
-        showResult(el, msg.join("\n"), d.board_connected === true);
-      } catch (e) {
-        showResult(document.getElementById("debugger-result"), e.message, false);
-      }
+        const msg = d.error || (d.probes || []).map(p => p.info || p.probe).join("\n") || d.detail || "No probe";
+        showEl(document.getElementById("ops-result"), msg, d.board_connected === true);
+      } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
     };
 
     document.getElementById("scan-serial").onclick = async () => {
       try {
         const d = await api("/api/scan/serial", "POST");
-        const el = document.getElementById("serial-result");
-        const pEl = document.getElementById("serial-ports");
-        const list = d.ports || [];
         if (d.confirmed_port) {
           serialPort.value = d.confirmed_port;
           document.getElementById("serial-port-input").value = d.confirmed_port;
-          let msg = "Port: " + d.confirmed_port;
-          if (d.verified && d.serial_number && d.part_number) {
-            msg += "\nSerial: " + d.serial_number + "\nPart: " + d.part_number;
-            msg += "\n[Verified: opened port and read IDs]";
-          } else if (d.confirmed_reply) {
-            msg += "\n\n" + d.confirmed_reply;
-            msg += "\n[Port responds but no IDs - flash FW with device_mgmt to verify]";
-          }
-          showResult(el, msg, d.verified === true);
-          pEl.textContent = (d.verified ? "Verified: " : "Port: ") + d.confirmed_port + (d.serial_number ? " | " + d.serial_number : "");
-        } else if (list.length) {
-          serialPort.value = list[0].path;
-          document.getElementById("serial-port-input").value = serialPort.value;
-          showResult(el, (d.hint || "No SmartBall reply.") + "\nPorts seen: " + list.map(p => p.path).join(", ") + "\n\nClick Verify Port to check.", false);
-          pEl.textContent = "Using: " + serialPort.value + " (unverified)";
+          showEl(document.getElementById("ops-result"), "Port: " + d.confirmed_port + (d.serial_number ? "\nSerial: " + d.serial_number : ""), d.verified);
         } else {
-          showResult(el, (d.hint || "No serial ports found. Connect XIAO via USB.") + "\n\nEnter /dev/ttyACM0 manually if needed.", false);
-          pEl.textContent = "Default: /dev/ttyACM0";
+          showEl(document.getElementById("ops-result"), d.hint || "No SmartBall on serial", false);
         }
-      } catch (e) {
-        showResult(document.getElementById("serial-result"), e.message, false);
-      }
+      } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
     };
 
     document.getElementById("verify-port").onclick = async () => {
       const port = getSerialPort();
-      const el = document.getElementById("serial-result");
-      const pEl = document.getElementById("serial-ports");
-      el.style.display = "block";
-      el.className = "result";
-      el.textContent = "Verifying " + port + "...";
+      showEl(document.getElementById("ops-result"), "Verifying " + port + "...", true);
       try {
         const d = await api("/api/verify/port", "POST", { port });
-        if (d.verified && d.serial_number && d.part_number) {
-          showResult(el, "Port verified:\nSerial: " + d.serial_number + "\nPart: " + d.part_number, true);
-          pEl.textContent = "Verified: " + port + " | Serial: " + d.serial_number;
-        } else if (d.error) {
-          showResult(el, "Verify failed: " + d.error, false);
-          pEl.textContent = port + " (unverified)";
-        } else {
-          showResult(el, "No device identity response. Device may need updated firmware with device_mgmt.", false);
-          pEl.textContent = port + " (no identity)";
-        }
-      } catch (e) {
-        showResult(el, e.message, false);
-      }
+        showEl(document.getElementById("ops-result"), d.verified ? "Serial: " + d.serial_number + "\nPart: " + d.part_number : "Verify failed: " + (d.error || "no identity"), d.verified);
+      } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
     };
 
     async function loadImages() {
@@ -339,144 +1234,141 @@
         (d.images || []).forEach(img => {
           const opt = document.createElement("option");
           opt.value = img.path;
-          opt.textContent = `${img.label} (${img.name})`;
+          opt.textContent = (img.label || img.name) + " (" + img.name + ")";
           sel.appendChild(opt);
         });
-      } catch (e) {}
+      } catch (_) {}
     }
     loadImages();
 
-    function updateLEDs(btEnabled, connected) {
-      const ledBt = document.getElementById("led-bt");
-      const ledBall = document.getElementById("led-ball");
-      ledBt.className = "led " + (btEnabled ? "on" : "off");
-      ledBall.className = "led " + (connected ? "on" : "off");
-    }
+    document.getElementById("upg-btn").onclick = async () => {
+      const transport = document.getElementById("transport-select").value;
+      const path = document.getElementById("image-custom").value.trim() || document.getElementById("image-select").value;
+      if (!path) { showEl(document.getElementById("ops-result"), "Select image.", false); return; }
+      if (transport === "ble" && !getBleAddr()) { showEl(document.getElementById("ops-result"), "Scan first.", false); return; }
+      const body = { image: path, transport };
+      if (transport === "ble") body.address = getBleAddr();
+      if (transport === "serial") body.port = getSerialPort();
+      showEl(document.getElementById("ops-result"), "Upgrading...", true);
+      try {
+        const d = await api("/api/upgrade", "POST", body);
+        showEl(document.getElementById("ops-result"), (d.stdout||"") + (d.stderr||"") + (d.error||""), d.ok);
+      } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
+    };
 
-    const statusEl = document.getElementById("ble-status");
-    async function loadConnectionStatus() {
+    document.getElementById("read-version").onclick = async () => {
+      const transport = document.getElementById("transport-select").value;
+      if (transport === "debugger") { showEl(document.getElementById("ops-result"), "Use BLE or Serial for Read Version.", false); return; }
+      const body = { transport };
+      if (transport === "ble") { body.address = getBleAddr(); if (!getBleAddr()) { showEl(document.getElementById("ops-result"), "Scan first.", false); return; } }
+      else body.port = getSerialPort();
+      showEl(document.getElementById("ops-result"), "Reading...", true);
+      try {
+        const d = await api("/api/version/read", "POST", body);
+        showEl(document.getElementById("ops-result"), (d.stdout||"") + (d.stderr||"") + (d.error||""), d.ok);
+      } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
+    };
+
+    document.getElementById("activate-image").onclick = async () => {
+      const transport = document.getElementById("transport-select").value;
+      if (transport === "debugger") { showEl(document.getElementById("ops-result"), "Use BLE or Serial.", false); return; }
+      const body = { transport, slot: document.getElementById("activate-slot").value };
+      if (transport === "ble") { body.address = getBleAddr(); if (!getBleAddr()) { showEl(document.getElementById("ops-result"), "Scan first.", false); return; } }
+      else body.port = getSerialPort();
+      try {
+        const d = await api("/api/version/activate", "POST", body);
+        showEl(document.getElementById("ops-result"), (d.stdout||"") + (d.stderr||"") + (d.error||""), d.ok);
+      } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
+    };
+
+    let pollTimer = null;
+    async function loadConnectionStatus(refreshOnConnect = false) {
       try {
         let d = await api("/api/connection");
         updateLEDs(d.bt_enabled === true, d.connected === true);
         if (d.connected && d.address) {
           setConnectedUI(true, d.address);
-          statusEl.textContent = "";
+          if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+          if (refreshOnConnect) location.reload();
           return;
         }
         setConnectedUI(false);
-        if (!d.bt_enabled) {
-          statusEl.textContent = "Starting BT...";
-          d = await api("/api/ensure-bt");
-          updateLEDs(d.bt_enabled === true, false);
-          if (!d.bt_enabled) {
-            statusEl.textContent = "BT failed to start";
-            return;
-          }
-        }
-        statusEl.textContent = "Connecting to SmartBall...";
+        if (!d.bt_enabled) { await api("/api/ensure-bt"); d = await api("/api/connection"); updateLEDs(d.bt_enabled, false); }
         d = await api("/api/check-cached");
         updateLEDs(d.bt_enabled === true, d.connected === true);
-        if (d.connected && d.address) setConnectedUI(true, d.address);
-        statusEl.textContent = "";
+        if (d.connected && d.address) {
+          setConnectedUI(true, d.address);
+          if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+          if (refreshOnConnect) location.reload();
+          return;
+        }
+        if (d.found_address) {
+          setConnectedUI(false, null, d.found_address);
+        } else {
+          setConnectedUI(false);
+        }
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        pollTimer = setTimeout(() => loadConnectionStatus(true), 8000);
       } catch (e) {
         updateLEDs(false, false);
-        statusEl.textContent = e.message || "Error";
+        pollTimer = setTimeout(() => loadConnectionStatus(true), 8000);
       }
     }
     loadConnectionStatus();
 
-    function updateImagePath() {
-      const custom = document.getElementById("image-custom").value.trim();
-      imagePath.value = custom || document.getElementById("image-select").value || null;
-      document.getElementById("image-path").textContent = imagePath.value || "";
-    }
-    document.getElementById("image-select").onchange = updateImagePath;
-    document.getElementById("image-custom").oninput = updateImagePath;
-
-    function getTransport() {
-      return document.getElementById("transport-select").value;
-    }
-    function setTransportHint() {
-      const t = getTransport();
-      const h = document.getElementById("transport-hint");
-      if (t === "ble") h.textContent = "Uses SmartBall";
-      else if (t === "serial") h.textContent = "Uses /dev/ttyACM*";
-      else h.textContent = "Uses debug probe (flash only)";
-    }
-    document.getElementById("transport-select").onchange = setTransportHint;
-    setTransportHint();
-
-    const opsResult = document.getElementById("ops-result");
-
-    document.getElementById("upg-btn").onclick = async () => {
-      const transport = getTransport();
-      const path = imagePath.value || document.getElementById("image-select").value;
-      if (!path) {
-        showResult(opsResult, "Select an image first.", false);
-        return;
-      }
-      if (transport === "ble" && !getBleAddr()) {
-        showResult(opsResult, "Scan for SmartBall first.", false);
-        return;
-      }
-      const body = { image: path, transport };
-      if (transport === "ble") body.address = getBleAddr();
-      if (transport === "serial") body.port = getSerialPort();
-      opsResult.textContent = "Upgrading... (may take 1–2 min for debugger)";
-      opsResult.className = "result";
-      opsResult.style.display = "block";
+    // Run / Stop recording (top bar)
+    let recordingActive = false;
+    let statusPollInterval = null;
+    document.getElementById("run-recording-btn").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) { setStatusBar("Scan for SmartBall first.", false); return; }
+      setStatusBar("Starting recording (continuous)...", true);
+      const runBtn = document.getElementById("run-recording-btn");
+      const stopBtn = document.getElementById("stop-recording-btn");
+      runBtn.disabled = true;
       try {
-        const d = await api("/api/upgrade", "POST", body);
-        showResult(opsResult, (d.stdout || "") + (d.stderr || "") + (d.error || ""), d.ok);
-      } catch (e) {
-        showResult(opsResult, e.message, false);
-      }
+        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "START_RECORD", payload: "00" });
+        if (!d.ok) { setStatusBar("Start failed: " + (d.error || "unknown"), false); runBtn.disabled = false; return; }
+        recordingActive = true;
+        stopBtn.disabled = false;
+        setStatusBar("Recording... Press Stop when done.", true);
+        function pollStatus() {
+          if (!recordingActive) return;
+          api("/api/binary/send", "POST", { address: addr, cmd: "STATUS", payload: "00" }).then(r => {
+            if (!r.ok || !r.raw_hex) return;
+            const buf = new Uint8Array(r.raw_hex.match(/.{1,2}/g).map(x => parseInt(x, 16)));
+            if (buf.length >= 20) {
+              const samples = new DataView(buf.buffer).getUint32(16, true);
+              setStatusBar("Recording... samples: " + samples, true);
+            }
+          }).catch(() => {});
+        }
+        statusPollInterval = setInterval(pollStatus, 1500);
+        pollStatus();
+      } catch (e) { setStatusBar("Error: " + e.message, false); runBtn.disabled = false; }
+    };
+    document.getElementById("stop-recording-btn").onclick = async () => {
+      const addr = getBleAddr();
+      if (!addr) return;
+      if (statusPollInterval) { clearInterval(statusPollInterval); statusPollInterval = null; }
+      setStatusBar("Stopping recording...", true);
+      const runBtn = document.getElementById("run-recording-btn");
+      const stopBtn = document.getElementById("stop-recording-btn");
+      stopBtn.disabled = true;
+      try {
+        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "STOP_RECORD", payload: "00" });
+        recordingActive = false;
+        runBtn.disabled = false;
+        setStatusBar(d.ok ? "Recording stopped." : ("Stop failed: " + (d.error || "unknown")), d.ok);
+      } catch (e) { setStatusBar("Error: " + e.message, false); recordingActive = false; runBtn.disabled = false; }
     };
 
-    document.getElementById("read-version").onclick = async () => {
-      const transport = getTransport();
-      if (transport === "debugger") {
-        showResult(opsResult, "Read Version uses BLE or Serial, not Debugger. Change transport.", false);
-        return;
-      }
-      const body = { transport };
-      if (transport === "ble") {
-        if (!getBleAddr()) { showResult(opsResult, "Scan for SmartBall first.", false); return; }
-        body.address = getBleAddr();
-      } else body.port = getSerialPort();
-      opsResult.textContent = "Reading...";
-      opsResult.className = "result";
-      opsResult.style.display = "block";
-      try {
-        const d = await api("/api/version/read", "POST", body);
-        showResult(opsResult, (d.stdout || "") + (d.stderr || "") + (d.error || ""), d.ok);
-      } catch (e) {
-        showResult(opsResult, e.message, false);
-      }
-    };
+    function setStatusBar(msg, ok) {
+      const sb = document.getElementById("page-status-bar");
+      if (sb) { sb.textContent = msg || "Ready"; sb.className = "status-bar" + (ok === false ? " err" : msg ? " active" : ""); }
+    }
 
-    document.getElementById("activate-image").onclick = async () => {
-      const transport = getTransport();
-      if (transport === "debugger") {
-        showResult(opsResult, "Activate uses BLE or Serial, not Debugger. Change transport.", false);
-        return;
-      }
-      const slot = document.getElementById("activate-slot").value;
-      const body = { transport, slot };
-      if (transport === "ble") {
-        if (!getBleAddr()) { showResult(opsResult, "Scan for SmartBall first.", false); return; }
-        body.address = getBleAddr();
-      } else body.port = getSerialPort();
-      opsResult.textContent = `Activating slot ${slot}...`;
-      opsResult.className = "result";
-      opsResult.style.display = "block";
-      try {
-        const d = await api("/api/version/activate", "POST", body);
-        showResult(opsResult, (d.stdout || "") + (d.stderr || "") + (d.error || ""), d.ok);
-      } catch (e) {
-        showResult(opsResult, e.message, false);
-      }
-    };
+    setStatusBar("");
   </script>
 </body>
 </html>

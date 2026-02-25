@@ -17,6 +17,7 @@ CMD_ID, CMD_STATUS, CMD_DIAG, CMD_SELFTEST = 0x01, 0x02, 0x03, 0x04
 CMD_CLEAR_ERRORS, CMD_SET, CMD_GET_CFG, CMD_SAVE_CFG, CMD_LOAD_CFG = 0x05, 0x06, 0x07, 0x08, 0x09
 CMD_FACTORY_RESET, CMD_START_RECORD, CMD_STOP_RECORD = 0x0A, 0x0B, 0x0C
 CMD_LIST_SHOTS, CMD_GET_SHOT, CMD_DEL_SHOT, CMD_FORMAT_STORAGE, CMD_BUS_SCAN = 0x0D, 0x0E, 0x0F, 0x10, 0x11
+CMD_GET_SHOT_CHUNK = 0x12
 
 RSP_ID, RSP_STATUS, RSP_DIAG, RSP_SELFTEST, RSP_BUS_SCAN = 0x81, 0x86, 0x87, 0x88, 0x89
 RSP_SHOT, RSP_CFG, RSP_SHOT_LIST = 0x8A, 0x8B, 0x8C
@@ -76,7 +77,7 @@ async def run_all_tests(addr: str) -> int:
         # Phase 1: test_command_dispatcher_all_cmds
         cmds = [CMD_ID, CMD_STATUS, CMD_DIAG, CMD_SELFTEST, CMD_CLEAR_ERRORS, CMD_SET, CMD_GET_CFG,
                 CMD_SAVE_CFG, CMD_LOAD_CFG, CMD_FACTORY_RESET, CMD_START_RECORD, CMD_STOP_RECORD,
-                CMD_LIST_SHOTS, CMD_GET_SHOT, CMD_DEL_SHOT, CMD_FORMAT_STORAGE, CMD_BUS_SCAN]
+                CMD_LIST_SHOTS, CMD_GET_SHOT, CMD_GET_SHOT_CHUNK, CMD_DEL_SHOT, CMD_FORMAT_STORAGE, CMD_BUS_SCAN]
         for cmd in cmds:
             rsp = await send_cmd(client, make_frame(cmd))
             if rsp is None or len(rsp) < 3 or rsp[0] < 0x80:
@@ -302,22 +303,37 @@ async def run_all_tests(addr: str) -> int:
                     n = rsp[3] if len(rsp) > 3 else 0
                     print("PASS test_cmd_list_shots_after_record" + (f" (shots={n})" if n >= 0 else ""))
 
-        # Phase 6: test_cmd_get_shot_by_id (requires at least one shot)
+        # Phase 6: test_cmd_get_shot_by_id (requires at least one shot; uses chunked fetch if size > 240)
+        CHUNK_SIZE = 240
         rsp = await send_cmd(client, make_frame(CMD_LIST_SHOTS))
         if rsp and rsp[0] == RSP_SHOT_LIST and len(rsp) > 4:
             n = rsp[3]
             if n > 0:
                 shot_id = struct.unpack_from("<I", rsp, 4)[0]
-                frame = struct.pack("<BH", CMD_GET_SHOT, 4) + struct.pack("<I", shot_id)
-                rsp = await send_cmd(client, frame)
-                if rsp and rsp[0] == RSP_SHOT and len(rsp) >= 40:
-                    if rsp[3:11] == b"SVTSHOT3":
-                        print("PASS test_cmd_get_shot_by_id")
-                    else:
-                        print("FAIL test_cmd_get_shot_by_id (no SVTSHOT3 magic)")
-                        failed += 1
+                shot_size = struct.unpack_from("<I", rsp, 8)[0]
+                payload = b""
+                if shot_size <= CHUNK_SIZE:
+                    frame = struct.pack("<BH", CMD_GET_SHOT, 4) + struct.pack("<I", shot_id)
+                    rsp2 = await send_cmd(client, frame)
+                    if rsp2 and rsp2[0] == RSP_SHOT:
+                        plen = struct.unpack_from("<H", rsp2, 1)[0]
+                        payload = rsp2[3:3 + plen]
                 else:
-                    print("FAIL test_cmd_get_shot_by_id (expected RSP_SHOT)")
+                    offset = 0
+                    while offset < shot_size:
+                        frame = struct.pack("<BH", CMD_GET_SHOT_CHUNK, 6) + struct.pack("<IH", shot_id, offset)
+                        rsp2 = await send_cmd(client, frame)
+                        if not rsp2 or rsp2[0] != RSP_SHOT:
+                            break
+                        plen = struct.unpack_from("<H", rsp2, 1)[0]
+                        payload += rsp2[3:3 + plen]
+                        offset += plen
+                        if plen < CHUNK_SIZE:
+                            break
+                if payload and len(payload) >= 36 and payload[:8] == b"SVTSHOT3":
+                    print("PASS test_cmd_get_shot_by_id")
+                else:
+                    print("FAIL test_cmd_get_shot_by_id (expected valid SVTSHOT3)")
                     failed += 1
             else:
                 print("PASS test_cmd_get_shot_by_id")  # skipped, no shots

@@ -19,6 +19,7 @@ VENV = TOOLS_DIR / ".venv" / "bin"
 SMPMGR = VENV / "smpmgr"
 IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
 WS = TOOLS_DIR / "ncs-workspace"
+SAVED_SHOTS_DIR = Path(__file__).resolve().parent / "saved_shots"
 DBUS = "unix:path=/var/run/dbus/system_bus_socket"
 
 BT_OFF_MSG = (
@@ -27,8 +28,70 @@ BT_OFF_MSG = (
 )
 BT_OFF_HINTS = ("network is down", "no default controller", "org.bluez", "connection refused", "invalid device")
 
-# Server-side BLE connection: after scan+connect, address is stored for Read/Upgrade/Activate
+# Server-side BLE connection: after scan+connect, address is stored. Kept until OTA (never user-disconnect).
 _connected_ble_addr = None
+
+# Background thread: connect to SmartBall at backend start, keep trying until found
+def _try_connect_smartball():
+    """Try to find and connect to SmartBall. Sets _connected_ble_addr on success."""
+    global _connected_ble_addr
+    if _connected_ble_addr:
+        return True
+    if not _is_bluetooth_up():
+        _ensure_bluetooth_on()
+        time.sleep(1)
+        if not _is_bluetooth_up():
+            return False
+    devices = []
+    try:
+        code2, out2, err2 = _run(["bluetoothctl", "devices"], timeout=3)
+        if err2 and any(h in (err2 or "").lower() for h in ("no default", "org.bluez", "connection refused")):
+            return False
+        for line in (out2 or "").splitlines():
+            parts = line.split(None, 2)
+            if len(parts) >= 2 and parts[0] == "Device":
+                addr, name = parts[1], (parts[2] if len(parts) > 2 else "").strip()
+                if "smartball" in (name or "").lower() or not name:
+                    devices.append({"address": addr, "name": name or "(no name)"})
+    except Exception:
+        pass
+    # If cache empty, run short BLE scan to discover SmartBall
+    if not devices:
+        try:
+            subprocess.run(["bluetoothctl", "scan", "on"], capture_output=True, timeout=2, env=_env())
+            time.sleep(5)
+            subprocess.run(["bluetoothctl", "scan", "off"], capture_output=True, timeout=2, env=_env())
+            code2, out2, _ = _run(["bluetoothctl", "devices"], timeout=3)
+            for line in (out2 or "").splitlines():
+                parts = line.split(None, 2)
+                if len(parts) >= 2 and parts[0] == "Device":
+                    addr, name = parts[1], (parts[2] if len(parts) > 2 else "").strip()
+                    if "smartball" in (name or "").lower() or not name:
+                        devices.append({"address": addr, "name": name or "(no name)"})
+        except Exception:
+            pass
+    if not devices:
+        return False
+    addr = devices[0]["address"]
+    _stop_ble_scan()
+    subprocess.run(["bluetoothctl", "disconnect", addr], capture_output=True, timeout=5, env=_env())
+    time.sleep(2)
+    code_c, _, _ = _run([str(SMPMGR), "--ble", addr, "--timeout", "12", "image", "state-read"], timeout=18)
+    _restart_ble_autoconnect()
+    if code_c == 0:
+        _connected_ble_addr = addr
+        return True
+    return False
+
+
+def _background_connect_loop():
+    """Daemon thread: poll for SmartBall until connected."""
+    while True:
+        if _connected_ble_addr:
+            time.sleep(10)  # already connected, check occasionally
+            continue
+        _try_connect_smartball()
+        time.sleep(8)  # poll interval when not connected
 
 
 def _stop_ble_scan():
@@ -150,9 +213,10 @@ def scan_ble():
             for line in (out2 or "").splitlines():
                 parts = line.split(None, 2)
                 if len(parts) >= 2 and parts[0] == "Device":
-                    addr, name = parts[1], (parts[2] if len(parts) > 2 else "")
-                    if "smartball" in name.lower():
-                        devices.append({"address": addr, "name": name})
+                    addr, name = parts[1], (parts[2] if len(parts) > 2 else "").strip()
+                    # Include SmartBall by name, or devices with no name (BLE often shows address-only)
+                    if "smartball" in (name or "").lower() or not name:
+                        devices.append({"address": addr, "name": name or "(no name)"})
         except subprocess.TimeoutExpired:
             pass
         # 2. If not cached, run short scan: bluetoothctl scan 5s (BLE, ~7s total vs hcitool 10s)
@@ -180,9 +244,9 @@ def scan_ble():
                 for line in (out2 or "").splitlines():
                     parts = line.split(None, 2)
                     if len(parts) >= 2 and parts[0] == "Device":
-                        addr, name = parts[1], (parts[2] if len(parts) > 2 else "")
-                        if "smartball" in name.lower():
-                            devices.append({"address": addr, "name": name})
+                        addr, name = parts[1], (parts[2] if len(parts) > 2 else "").strip()
+                        if "smartball" in (name or "").lower() or not name:
+                            devices.append({"address": addr, "name": name or "(no name)"})
             except (subprocess.TimeoutExpired, Exception):
                 pass
         # 3. Fallback: hcitool scan (classic, ~10s)
@@ -193,8 +257,8 @@ def scan_ble():
                     parts = line.strip().split("\t", 1)
                     if len(parts) >= 2:
                         addr, name = parts[0].strip(), (parts[1] or "").strip()
-                        if "smartball" in name.lower():
-                            devices.append({"address": addr, "name": name})
+                        if "smartball" in (name or "").lower() or not name:
+                            devices.append({"address": addr, "name": name or "(no name)"})
     except subprocess.TimeoutExpired:
         err = "BLE scan timed out"
     except (FileNotFoundError, Exception) as e:
@@ -428,38 +492,53 @@ def check_cached():
         _ensure_bluetooth_on()
         code2, out2, err2 = _run(["bluetoothctl", "devices"], timeout=3)
         if err2 and any(h in (err2 or "").lower() for h in ("no default", "org.bluez", "connection refused")):
-            return jsonify({"bt_enabled": False, "connected": False, "address": None})
+            return jsonify({"bt_enabled": False, "connected": False, "address": None, "found_address": None})
         for line in (out2 or "").splitlines():
             parts = line.split(None, 2)
             if len(parts) >= 2 and parts[0] == "Device":
-                addr, name = parts[1], (parts[2] if len(parts) > 2 else "")
-                if "smartball" in name.lower():
-                    devices.append({"address": addr, "name": name})
+                addr, name = parts[1], (parts[2] if len(parts) > 2 else "").strip()
+                if "smartball" in (name or "").lower() or not name:
+                    devices.append({"address": addr, "name": name or "(no name)"})
     except Exception:
         pass
+    # If cache empty, run short BLE scan so SmartBall can be discovered (fixes stuck "Searching for SmartBall…")
     if not devices:
-        return jsonify({"bt_enabled": _is_bluetooth_up(), "connected": False, "address": None})
+        try:
+            subprocess.run(["bluetoothctl", "scan", "on"], capture_output=True, timeout=2, env=_env())
+            time.sleep(5)
+            subprocess.run(["bluetoothctl", "scan", "off"], capture_output=True, timeout=2, env=_env())
+            code2, out2, _ = _run(["bluetoothctl", "devices"], timeout=3)
+            for line in (out2 or "").splitlines():
+                parts = line.split(None, 2)
+                if len(parts) >= 2 and parts[0] == "Device":
+                    addr, name = parts[1], (parts[2] if len(parts) > 2 else "").strip()
+                    if "smartball" in (name or "").lower() or not name:
+                        devices.append({"address": addr, "name": name or "(no name)"})
+        except Exception:
+            pass
+    if not devices:
+        return jsonify({"bt_enabled": _is_bluetooth_up(), "connected": False, "address": None, "found_address": None})
     addr = devices[0]["address"]
-    # Use short timeout (8s) on page load so UI appears quickly when SmartBall is off/unreachable
-    code_c, out_c, err_c = _run([str(SMPMGR), "--ble", addr, "--timeout", "8", "image", "state-read"], timeout=12)
+    # Release BLE so smpmgr can connect (bluetooth-autoconnect often holds device)
+    _prepare_ble_gentle(addr)
+    code_c, out_c, err_c = _run([str(SMPMGR), "--ble", addr, "--timeout", "12", "image", "state-read"], timeout=18)
     if code_c != 0 and _ble_needs_recovery(err_c, out_c):
-        _stop_ble_scan()
-        subprocess.run(["bluetoothctl", "disconnect", addr], capture_output=True, timeout=5, env=_env())
-        time.sleep(2)
-        code_c, out_c, err_c = _run([str(SMPMGR), "--ble", addr, "--timeout", "8", "image", "state-read"], timeout=12)
-        _restart_ble_autoconnect()
+        _prepare_ble_for_smpclient(addr, use_full_recovery=True)
+        code_c, out_c, err_c = _run([str(SMPMGR), "--ble", addr, "--timeout", "12", "image", "state-read"], timeout=18)
+    _restart_ble_autoconnect()
     if code_c == 0:
         _connected_ble_addr = addr
     return jsonify({
         "bt_enabled": _is_bluetooth_up(),
         "connected": _connected_ble_addr is not None,
         "address": _connected_ble_addr,
+        "found_address": addr if _connected_ble_addr is None else None,
     })
 
 
 @app.route("/api/disconnect", methods=["POST"])
 def disconnect():
-    """Clear BLE connection so user can scan again."""
+    """Clear BLE connection. Only used internally before OTA (GUI does not expose)."""
     global _connected_ble_addr
     _connected_ble_addr = None
     return jsonify({"ok": True})
@@ -595,7 +674,7 @@ def _read_version_via_smp(transport: str, addr: str | None, port: str) -> tuple[
 
 
 def _ble_needs_recovery(err, out):
-    """True if smpmgr failed due to connection issues (InProgress, disconnected, etc)."""
+    """True if smpmgr/smpclient failed due to connection issues (InProgress, disconnected, not found, etc)."""
     s = (err or "") + (out or "")
     s = s.lower()
     return (
@@ -605,7 +684,22 @@ def _ble_needs_recovery(err, out):
         or "bleakerror" in s
         or "no bluetooth adapters found" in s
         or "smpbladaptererror" in s
+        or "not found" in s
+        or "notify acquired" in s
+        or "notpermitted" in s
     )
+
+
+def _prepare_ble_for_smpclient(addr: str, use_full_recovery: bool = False) -> None:
+    """Release BLE so smpclient/Bleak can discover and connect.
+    If use_full_recovery: restart bluetooth (for InProgress). Else: gentle disconnect only."""
+    if use_full_recovery:
+        _stop_ble_scan()
+        time.sleep(5)  # Adapter stability after bluetooth restart
+        _prepare_ble_before_smpmgr(addr)
+        time.sleep(5)  # Device time to advertise after disconnect
+    else:
+        _prepare_ble_gentle(addr)
 
 
 @app.route("/api/version/read", methods=["POST"])
@@ -617,10 +711,14 @@ def read_version():
     if not addr and transport == "ble":
         return jsonify({"error": "Not connected. Scan for SmartBall first."}), 400
     port = data.get("port", "/dev/ttyACM0")
+    # Proactively release BLE before first attempt. Full recovery (bluetooth restart) is
+    # required for smpclient/Bleak—gentle prep often leaves "Notify acquired" or device
+    # still held by bluetooth-autoconnect.
+    if transport == "ble":
+        _prepare_ble_for_smpclient(addr, use_full_recovery=True)
     code, out, err = _read_version_via_smp(transport, addr, port)
     if transport == "ble" and code != 0 and _ble_needs_recovery(err, out):
-        _stop_ble_scan()
-        _prepare_ble_before_smpmgr(addr)
+        _prepare_ble_for_smpclient(addr, use_full_recovery=True)
         code, out, err = _read_version_via_smp(transport, addr, port)
         _restart_ble_autoconnect()
     return jsonify({"ok": code == 0, "stdout": out, "stderr": err, "error": None if code == 0 else (err or out)})
@@ -637,11 +735,12 @@ def activate_version():
         return jsonify({"error": "Not connected. Scan for SmartBall first."}), 400
     port = data.get("port", "/dev/ttyACM0")
 
+    if transport == "ble":
+        _prepare_ble_for_smpclient(addr, use_full_recovery=False)
     if slot.upper() == "B":
         code, out, err = _activate_slot_via_smp(transport, addr, port, slot)
         if transport == "ble" and code != 0 and _ble_needs_recovery(err, out):
-            _stop_ble_scan()
-            _prepare_ble_before_smpmgr(addr)
+            _prepare_ble_for_smpclient(addr, use_full_recovery=True)
             code, out, err = _activate_slot_via_smp(transport, addr, port, slot)
             _restart_ble_autoconnect()
     else:
@@ -651,11 +750,318 @@ def activate_version():
             cmd = [str(SMPMGR), "--ble", addr, "--timeout", "25", "image", "state-write", "--confirm"]
         code, out, err = _run(cmd)
         if transport == "ble" and code != 0 and _ble_needs_recovery(err, out):
-            _stop_ble_scan()
-            _prepare_ble_before_smpmgr(addr)
+            _prepare_ble_for_smpclient(addr, use_full_recovery=True)
             code, out, err = _run(cmd)
             _restart_ble_autoconnect()
     return jsonify({"ok": code == 0, "stdout": out, "stderr": err, "error": None if code == 0 else (err or out)})
+
+
+# --- BLE Binary Protocol (SVB1) API ---
+def _get_binary_addr():
+    return _connected_ble_addr or (request.get_json(silent=True) or {}).get("address") or (request.args.get("address"))
+
+
+@app.route("/api/binary/send", methods=["POST"])
+def binary_send():
+    """Send a binary protocol command. Requires BLE connected (use address from scan)."""
+    data = request.get_json() or {}
+    addr = data.get("address") or _connected_ble_addr
+    cmd_name = (data.get("cmd") or "").upper()
+    payload_hex = data.get("payload", "")
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "response": None}), 400
+    from ble_binary_client import (
+        make_frame, send_binary_cmd_sync, format_response,
+        CMD_ID, CMD_STATUS, CMD_DIAG, CMD_SELFTEST, CMD_CLEAR_ERRORS,
+        CMD_SET, CMD_GET_CFG, CMD_SAVE_CFG, CMD_LOAD_CFG, CMD_FACTORY_RESET,
+        CMD_START_RECORD, CMD_STOP_RECORD, CMD_LIST_SHOTS, CMD_GET_SHOT, CMD_DEL_SHOT,
+        CMD_FORMAT_STORAGE, CMD_BUS_SCAN,
+    )
+    cmd_map = {
+        "ID": CMD_ID, "STATUS": CMD_STATUS, "DIAG": CMD_DIAG, "SELFTEST": CMD_SELFTEST,
+        "CLEAR_ERRORS": CMD_CLEAR_ERRORS, "SET": CMD_SET, "GET_CFG": CMD_GET_CFG,
+        "SAVE_CFG": CMD_SAVE_CFG, "LOAD_CFG": CMD_LOAD_CFG, "FACTORY_RESET": CMD_FACTORY_RESET,
+        "START_RECORD": CMD_START_RECORD, "STOP_RECORD": CMD_STOP_RECORD,
+        "LIST_SHOTS": CMD_LIST_SHOTS, "GET_SHOT": CMD_GET_SHOT, "DEL_SHOT": CMD_DEL_SHOT,
+        "FORMAT_STORAGE": CMD_FORMAT_STORAGE, "BUS_SCAN": CMD_BUS_SCAN,
+    }
+    cmd_id = cmd_map.get(cmd_name)
+    if cmd_id is None:
+        return jsonify({"ok": False, "error": f"Unknown cmd: {cmd_name}", "response": None}), 400
+    payload = bytes.fromhex(payload_hex.replace(" ", "")) if payload_hex else None
+    if cmd_name == "GET_CFG" and not payload_hex:
+        payload = b"\x00"  # get all
+    # Firmware rejects plen=0; use dummy byte for cmds that need no payload
+    if payload is not None and len(payload) == 0:
+        payload = b"\x00"
+    frame = make_frame(cmd_id, payload=payload) if payload else make_frame(cmd_id)
+    rsp, err = send_binary_cmd_sync(addr, frame)
+    if err:
+        return jsonify({"ok": False, "error": err, "response": None})
+    if not rsp:
+        return jsonify({"ok": False, "error": "No response from device (timeout or disconnected).", "response": "(no response)"})
+    formatted = format_response(rsp)
+    return jsonify({"ok": True, "response": formatted, "raw_hex": rsp.hex()})
+
+
+@app.route("/api/chip/read", methods=["POST"])
+def chip_read():
+    """Read from SPI chip register (BLE). cs: 0=LSM6, 1=ADXL. reg and len in decimal or hex."""
+    data = request.get_json() or {}
+    addr = data.get("address") or _connected_ble_addr
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "data_hex": None}), 400
+    try:
+        cs = int(data.get("cs", 0))
+        reg = data.get("reg", 0)
+        if isinstance(reg, str):
+            reg = int(reg, 16 if reg.strip().startswith("0x") else 10)
+        else:
+            reg = int(reg)
+        length = int(data.get("len", 1))
+    except (TypeError, ValueError) as e:
+        return jsonify({"ok": False, "error": f"Invalid cs/reg/len: {e}", "data_hex": None}), 400
+    from ble_binary_client import spi_read_sync
+    out, err = spi_read_sync(addr, cs, reg, length)
+    if err:
+        return jsonify({"ok": False, "error": err, "data_hex": None})
+    return jsonify({"ok": True, "data_hex": out.hex() if out else ""})
+
+
+@app.route("/api/chip/write", methods=["POST"])
+def chip_write():
+    """Write to SPI chip register (BLE). cs: 0=LSM6, 1=ADXL. data_hex: hex string."""
+    data = request.get_json() or {}
+    addr = data.get("address") or _connected_ble_addr
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first."}), 400
+    try:
+        cs = int(data.get("cs", 0))
+        reg = data.get("reg", 0)
+        if isinstance(reg, str):
+            reg = int(reg, 16 if reg.strip().startswith("0x") else 10)
+        else:
+            reg = int(reg)
+        data_hex = (data.get("data_hex") or "").replace(" ", "")
+        payload_bytes = bytes.fromhex(data_hex) if data_hex else b""
+    except (TypeError, ValueError) as e:
+        return jsonify({"ok": False, "error": f"Invalid cs/reg/data_hex: {e}"}), 400
+    if len(payload_bytes) > 239:
+        return jsonify({"ok": False, "error": "Data max 239 bytes."}), 400
+    from ble_binary_client import spi_write_sync
+    ok, err = spi_write_sync(addr, cs, reg, payload_bytes)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Write failed"})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/shot/fetch", methods=["POST"])
+def shot_fetch():
+    """Fetch shot data (chunked if >240B). Returns raw_hex of full SVTSHOT3 payload."""
+    data = request.get_json() or {}
+    addr = data.get("address") or _connected_ble_addr
+    shot_id = data.get("shot_id")
+    size = data.get("size", 0)
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected.", "raw_hex": None}), 400
+    if shot_id is None:
+        return jsonify({"ok": False, "error": "shot_id required.", "raw_hex": None}), 400
+    _prepare_ble_gentle(addr)
+    from ble_binary_client import (
+        fetch_shot_one_connection_sync,
+        fetch_shot_chunked_sync,
+        _is_disconnect_error,
+    )
+    import struct
+    # Primary: one connection, chunk=240, delay=0.04s (~24s for 15KB, tested 10/10 pass)
+    payload, err = fetch_shot_one_connection_sync(
+        addr, shot_id, size,
+        chunk_size=240,
+        timeout_per_chunk=8.0,
+        delay_between_chunks_sec=0.04,
+    )
+    if err and _is_disconnect_error(err):
+        payload, err = fetch_shot_chunked_sync(
+            addr, shot_id, size,
+            chunk_size=240,
+            timeout_per_chunk=5.0,
+            between_segment_callback=lambda _: (_prepare_ble_gentle(addr), time.sleep(2)),
+        )
+    if err:
+        return jsonify({"ok": False, "error": err, "raw_hex": None})
+    if not payload or len(payload) < 8:
+        return jsonify({"ok": False, "error": "Incomplete fetch.", "raw_hex": None})
+    if len(payload) < size:
+        return jsonify({"ok": False, "error": f"Incomplete fetch (got {len(payload)} bytes, expected at least {size}).", "raw_hex": None})
+    if payload[:8] != b"SVTSHOT3":
+        return jsonify({"ok": False, "error": "Shot data invalid (chunks out of order or corrupted).", "raw_hex": None})
+    # Validate length from header so frontend parser won't fail (expectedLen = 24 + count*sampleSize + 4)
+    if len(payload) >= 24:
+        count = struct.unpack_from("<I", payload, 12)[0]
+        imu_mask = payload[17]
+        sample_size = 68 if (imu_mask & 0x06) else 28
+        expected_len = 24 + count * sample_size + 4
+        if len(payload) < expected_len:
+            return jsonify({
+                "ok": False,
+                "error": f"Shot truncated (expected {expected_len} bytes from header, got {len(payload)}).",
+                "raw_hex": None,
+            })
+    return jsonify({"ok": True, "raw_hex": payload.hex()})
+
+
+def _ensure_saved_shots_dir():
+    SAVED_SHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_saved_shots():
+    _ensure_saved_shots_dir()
+    items = []
+    for p in sorted(SAVED_SHOTS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+        try:
+            with open(p, "r") as f:
+                d = json.load(f)
+            items.append({
+                "id": p.stem,
+                "name": d.get("name", p.stem),
+                "created_at": d.get("created_at", ""),
+                "shot_id": d.get("shot_id"),
+                "sample_rate": d.get("sample_rate"),
+                "count": d.get("count"),
+            })
+        except Exception:
+            pass
+    return items
+
+
+@app.route("/api/saved-shots", methods=["GET"])
+def saved_shots_list():
+    """List all saved datasets (persists across restarts)."""
+    try:
+        items = _list_saved_shots()
+        return jsonify({"ok": True, "items": items})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "items": []})
+
+
+@app.route("/api/saved-shots/<sid>", methods=["GET"])
+def saved_shot_get(sid):
+    """Get one saved dataset by id."""
+    path = SAVED_SHOTS_DIR / f"{sid}.json"
+    if not path.is_file():
+        return jsonify({"ok": False, "error": "Not found.", "raw_hex": None}), 404
+    try:
+        with open(path, "r") as f:
+            d = json.load(f)
+        raw_hex = d.get("raw_hex")
+        if not raw_hex:
+            return jsonify({"ok": False, "error": "No data.", "raw_hex": None}), 400
+        return jsonify({"ok": True, "raw_hex": raw_hex, "name": d.get("name"), "shot_id": d.get("shot_id"), "sample_rate": d.get("sample_rate"), "count": d.get("count")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "raw_hex": None}), 500
+
+
+@app.route("/api/saved-shots", methods=["POST"])
+def saved_shot_save():
+    """Save dataset (name, raw_hex, shot_id, address). Returns id. If address provided, deletes shot from device after save."""
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip() or f"Shot {data.get('shot_id', '?')}"
+    raw_hex = data.get("raw_hex")
+    shot_id = data.get("shot_id")
+    sample_rate = data.get("sample_rate")
+    count = data.get("count")
+    addr = data.get("address") or _connected_ble_addr
+    if not raw_hex:
+        return jsonify({"ok": False, "error": "raw_hex required.", "id": None}), 400
+    _ensure_saved_shots_dir()
+    import uuid
+    sid = str(uuid.uuid4())[:8]
+    path = SAVED_SHOTS_DIR / f"{sid}.json"
+    rec = {
+        "id": sid,
+        "name": name,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "shot_id": shot_id,
+        "raw_hex": raw_hex,
+        "sample_rate": sample_rate,
+        "count": count,
+    }
+    try:
+        with open(path, "w") as f:
+            json.dump(rec, f, indent=2)
+        if addr and shot_id is not None:
+            try:
+                from ble_binary_client import make_frame, send_binary_cmd_sync, CMD_DEL_SHOT
+                import struct
+                frame = make_frame(CMD_DEL_SHOT, payload=struct.pack("<I", int(shot_id)))
+                _, err = send_binary_cmd_sync(addr, frame)
+                if err:
+                    return jsonify({"ok": True, "id": sid, "name": name, "deleted": False, "delete_error": err})
+            except Exception as e:
+                return jsonify({"ok": True, "id": sid, "name": name, "deleted": False, "delete_error": str(e)})
+        return jsonify({"ok": True, "id": sid, "name": name, "deleted": bool(addr and shot_id is not None)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "id": None}), 500
+
+
+@app.route("/api/saved-shots/<sid>", methods=["DELETE"])
+def saved_shot_delete(sid):
+    """Delete saved dataset from PC."""
+    path = SAVED_SHOTS_DIR / f"{sid}.json"
+    if not path.is_file():
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    try:
+        path.unlink()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/shot/delete", methods=["POST"])
+def shot_delete():
+    """Delete shot from device (CMD_DEL_SHOT)."""
+    data = request.get_json() or {}
+    addr = data.get("address") or _connected_ble_addr
+    shot_id = data.get("shot_id")
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected."}), 400
+    if shot_id is None:
+        return jsonify({"ok": False, "error": "shot_id required."}), 400
+    from ble_binary_client import make_frame, send_binary_cmd_sync, CMD_DEL_SHOT
+    import struct
+    payload = struct.pack("<I", int(shot_id)) if isinstance(shot_id, (int, float)) else bytes.fromhex(str(shot_id).replace(" ", ""))
+    frame = make_frame(CMD_DEL_SHOT, payload=payload)
+    rsp, err = send_binary_cmd_sync(addr, frame)
+    if err:
+        return jsonify({"ok": False, "error": err})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/binary/tests", methods=["POST"])
+def binary_tests():
+    """Run all 22 BLE unit tests. Returns pass/fail count and log."""
+    addr = (request.get_json(silent=True) or {}).get("address") or _connected_ble_addr
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "passed": 0, "total": 0, "log": ""}), 400
+    import subprocess
+    script = TOOLS_DIR / "scripts" / "smartball_ble_tests.py"
+    try:
+        r = subprocess.run(
+            [str(TOOLS_DIR / ".venv" / "bin" / "python3"), str(script), addr],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(TOOLS_DIR),
+            env={**os.environ, "DBUS_SESSION_BUS_ADDRESS": DBUS},
+        )
+        log = (r.stdout or "") + (r.stderr or "")
+        m = __import__("re").search(r"(\d+)/(\d+) passed", log)
+        passed, total = (int(m.group(1)), int(m.group(2))) if m else (0, 22)
+        return jsonify({"ok": r.returncode == 0, "passed": passed, "total": total, "log": log})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Tests timed out", "passed": 0, "total": 22, "log": "Timeout"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "passed": 0, "total": 22, "log": str(e)})
 
 
 @app.route("/api/upgrade", methods=["POST"])
@@ -754,4 +1160,7 @@ west build -b xiao_ble_sense nrf/app --sysbuild --pristine -- \\
 
 
 if __name__ == "__main__":
+    import threading
+    t = threading.Thread(target=_background_connect_loop, daemon=True)
+    t.start()
     app.run(host="0.0.0.0", port=5050, debug=False)

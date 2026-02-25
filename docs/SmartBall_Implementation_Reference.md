@@ -2,6 +2,9 @@
 
 Full technical documentation of the SmartBall firmware for the Seeed XIAO nRF52840 Sense, including BLE binary protocol, storage, configuration, and BLE OTA update.
 
+**Quick reference (cite this doc in future):**
+- **Direct chip read/write (debug):** §6.2 — Read/write any LSM6 (cs=0) or ADXL (cs=1) register over **BLE** (Web GUI “Chip access” tab, `/api/chip/read`, `/api/chip/write`) or **debugger/serial** (Zephyr shell: `spi read <cs> <reg> [len]`, `spi write <cs> <reg> <hex>`). Commands: CMD_SPI_READ 0x13, CMD_SPI_WRITE 0x14; response RSP_SPI_DATA 0x8D. See §3.2 / §3.3 for payload layout.
+
 ---
 
 ## 1. Overview
@@ -87,6 +90,9 @@ Frames with `plen=0` or `plen > 240` are rejected (no response).
 | 0x0F | CMD_DEL_SHOT | shot_id (4 LE) | Delete shot |
 | 0x10 | CMD_FORMAT_STORAGE | (any) | Format storage |
 | 0x11 | CMD_BUS_SCAN | (any) | Scan SPI/I2C buses |
+| 0x12 | CMD_GET_SHOT_CHUNK | id(4 LE), offset(2 LE) | Get shot chunk (≤240 B) |
+| 0x13 | CMD_SPI_READ | cs(1), reg(1), len(1) | Read chip register; cs: 0=LSM6, 1=ADXL |
+| 0x14 | CMD_SPI_WRITE | cs(1), reg(1), data… | Write chip register |
 
 ### 3.3 Responses (Device → Host)
 
@@ -94,12 +100,13 @@ Frames with `plen=0` or `plen > 240` are rejected (no response).
 |----|------|----------------|
 | 0x81 | RSP_ID | fw_version(2), protocol_ver, hw_rev, uid_len, uid[8] |
 | 0x86 | RSP_STATUS | uptime(4), last_error(4), error_flags(4), dev_state(1), samples(4), sat_int(1), sat_lsm(1), storage_used(4), storage_free(4), batt(2), temp(1), reset_reason(1), build_id(4), BLE metrics block |
-| 0x87 | RSP_DIAG | imu_ready(1), whoami(1), ... |
+| 0x87 | RSP_DIAG | imu_ready(1), whoami(1), reserved(2), voltage_mv(2 LE), temp(1) |
 | 0x88 | RSP_SELFTEST | result(1) |
 | 0x89 | RSP_BUS_SCAN | spi_count, i2c_count, ids… |
 | 0x8A | RSP_SHOT | raw SVTSHOT3 blob |
 | 0x8B | RSP_CFG | count, [klen, vlen, key, val]... |
 | 0x8C | RSP_SHOT_LIST | count, [id(4), size(4)]... |
+| 0x8D | RSP_SPI_DATA | data_len(2 LE), data… | SPI read response |
 
 ### 3.4 RSP_STATUS Layout (Detailed)
 
@@ -184,6 +191,42 @@ Commands: SET, GET_CFG, SAVE_CFG, LOAD_CFG, FACTORY_RESET.
 - **Multi-IMU:** Internal + LSM6DSOX + ADXL375; saturation counters tracked
 - **Recording:** Ring buffer in RAM; writer task to flash; CMD_START_RECORD / CMD_STOP_RECORD
 - **Event mode:** CMD_START_RECORD with payload[0]=1; ADXL375 trigger; pre-trigger buffer
+
+### 6.1 Debugging zero or fixed IMU data
+
+- **Web GUI:** After Fetch & Plot or Load, use the **Debug — IMU data check** panel. It shows `imu_source_mask` (1=Internal, 2=LSM6, 4=ADXL), first-sample values per source, and min/max per channel. If a channel shows **(all zero)** or **(constant)**, that source may be unconnected or the read may be failing.
+- **BUS_SCAN:** In the Device tab, run **BUS_SCAN** to verify SPI devices (LSM6DSOX, ADXL375) are detected. If LSM6 is not present, `l_*` in shots will be zero.
+- **Firmware:** `multi_imu_sample_fetch()` zeros the sample then fills only sources that init’d and read successfully. If `lsm6dsox_spi_read_accel`/`read_gyro` fail (e.g. SPI transfer error), `l_*` stay zero. Check SPI wiring, CS pin, and that the external LSM6DSOX is powered and responding.
+
+### 6.2 Direct chip read/write (debug)
+
+You can read or write any register on the LSM6 (cs=0) or ADXL (cs=1) for debugging.
+
+**Over BLE**
+
+- **Web GUI:** Open the **Chip access** tab. Choose chip (LSM6 or ADXL), enter register in hex (e.g. `0x0F`), set read length, then **Read**; or enter write data as hex (e.g. `00 01 02`) and **Write**.
+- **API:** `POST /api/chip/read` body `{ "address?", "cs", "reg", "len" }` → `{ "ok", "data_hex" }`; `POST /api/chip/write` body `{ "address?", "cs", "reg", "data_hex" }` → `{ "ok" }`. Register can be decimal or hex string (e.g. `"0x0F"`).
+- **Protocol:** CMD_SPI_READ (0x13) payload `[cs, reg, len]`; response RSP_SPI_DATA (0x8D) with data. CMD_SPI_WRITE (0x14) payload `[cs, reg, data...]`; response RSP_STATUS. Max read 240 bytes, max write 239 bytes. LSM6/ADXL use reg|0x80 for read, reg&0x7F for write; SPI mode 3.
+
+**Over debugger/serial**
+
+- With the device connected via USB (or UART console), the Zephyr shell is enabled. Use:
+  - `spi read <cs> <reg> [len]` — e.g. `spi read 0 0x0F 1`
+  - `spi write <cs> <reg> <hex_bytes>` — e.g. `spi write 0 0x10 0102`
+- Same `spi_bus_chip_read` / `spi_bus_chip_write` are used as for BLE. Useful when debugging with a serial terminal or RTT.
+
+**Script: read external IMU directly (BLE)**
+
+- When recording shows no external IMU data, verify the chips on SPI with:
+  ```bash
+  python3 scripts/read_imu_via_ble.py [BLE_ADDR]
+  ```
+  Reads LSM6 WHO_AM_I (0x0F), accel/gyro regs, and ADXL DEVID/DATA. If these succeed, SPI and chips are OK; the issue is likely in multi_imu init or sample_fetch. If they fail, check wiring and CS pins.
+
+**Compare Internal IMU vs external IMU (LSM6; impact ignored)**
+
+- **Web GUI:** After Fetch & Plot or Load saved, the **Debug — IMU data check** panel includes **Compare Internal vs IMU**: mean (μ) per axis for Internal and IMU, and diff(μ) = Internal − IMU (accel m/s², gyro rad/s).
+- **Script:** `python3 scripts/compare_internal_vs_imu.py --fetch BLE_ADDR [shot_id]` or `--file path/to/saved.json` or raw hex. Prints side-by-side first/min/max/mean and diff mean for each axis (Internal vs LSM6 only).
 
 ---
 
@@ -302,14 +345,49 @@ west build -b xiao_ble_sense nrf/app --sysbuild -- -DEXTRA_CONF_FILE=prj_v1.conf
 ```bash
 cd /home/mini/tools
 ./scripts/flash_xiao.sh
-# Uses OpenOCD + CMSIS-DAP
+# Uses OpenOCD + CMSIS-DAP; kills stray OpenOCD first
 ```
 
-### 8.3 Debug
+### 8.3 Debugging with the debugger
+
+**Prerequisites:** CMSIS-DAP probe (e.g. Raspberry Pi Debug Probe) connected to XIAO SWD (SC→SWDCLK, SD→SWDIO, GND→GND). XIAO USB connected for serial console.
+
+**Release the probe** (if flash/debug says "Resource busy"):
 
 ```bash
-cd ncs-workspace
-west debug --runner openocd -- --gdb /usr/bin/gdb-multiarch
+cd /home/mini/tools
+source scripts/debugger_ctl.sh && ensure_debugger_free
+```
+
+**Option A — Serial shell (for chip read/write, logs):**
+
+1. Build and flash the app (with shell enabled, see §6.2):
+   ```bash
+   cd /home/mini/tools/ncs-workspace
+   west build -b xiao_ble_sense nrf/app --sysbuild -- -DEXTRA_CONF_FILE=prj_v1.conf
+   cd /home/mini/tools && ./scripts/flash_xiao.sh
+   ```
+2. Connect serial to the XIAO USB port: **115200 8N1** (e.g. `screen /dev/ttyACM0 115200` or minicom).
+3. Reset the device if needed; you should see the Zephyr shell prompt. Use:
+   - `spi read <cs> <reg> [len]` — e.g. `spi read 0 0x0F 1` (LSM6 WHO_AM_I)
+   - `spi write <cs> <reg> <hex>` — e.g. `spi write 0 0x10 01`
+   - `help` for other commands.
+
+**Option B — GDB (breakpoints, step, backtrace):**
+
+```bash
+cd /home/mini/tools
+./scripts/debug_xiao.sh
+```
+
+This builds with `prj_debug.conf` (no optimizations), flashes, and starts GDB. Quit GDB with `quit` or Ctrl+D to release the probe. Useful breakpoints: `main`, `spi_bus_chip_read`, `spi_bus_chip_write`, `z_arm_hard_fault` (crashes). See `docs/DEBUG_GDB.md` for commands.
+
+**Manual GDB (if you already built with sysbuild):**
+
+```bash
+cd /home/mini/tools/ncs-workspace
+source scripts/debugger_ctl.sh && ensure_debugger_free
+sudo west debug --runner openocd -- --gdb /usr/bin/gdb-multiarch
 ```
 
 ---
