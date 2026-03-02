@@ -1,0 +1,29 @@
+---
+description: BLE OTA and FSX optimization — follow test plan and continue if stopped
+alwaysApply: true
+---
+
+# BLE OTA + FSX Optimization Test Plan (Worker / Agent)
+
+When working on BLE OTA, FSX, or related tooling in this repo:
+
+1. **Authority**: Follow **BLE_OTA_and_FSX_Optimization_Test_Plan.md** as the single source of truth. Phases 0–7 define firmware instrumentation, BLE lock, link tuning, FSX mcumgr, host tools, chunk optimization, OTA regression, and stress tests.
+
+2. **If you stop for any reason** (error, question, timeout, or pause):
+   - **Continue.** Do not leave the plan incomplete.
+   - Resume from the **next unchecked phase or step** in the plan.
+   - If blocked (e.g. missing BLE device), document the blocker and continue with the next phase that can be done, or add/skip tests as the plan allows.
+
+3. **Implementation summary** (from the plan):
+   - Phase 0: `ncs-workspace/nrf/app/src/ble_metrics.c`, `docs/perf_log.csv`, `scripts/append_perf_log.py`
+   - Phase 1: `msr1_ota/ota_ble_mcumgr.sh`, `msr1_ota/web_gui/app.py` — BLE lock
+   - Phase 2: `prj.conf` (connection params, DLE, 2M PHY, `CONFIG_BT_BUF_ACL_TX_COUNT`)
+   - Phase 3: `nrf/app/src/fsx_mgmt.c` (OPEN, WRITE, CLOSE, STATUS)
+   - Phase 4: `msr1_ota/web_gui/fsx_push.py` — lock, timing, KBps, retries, CRC
+   - Phase 5: `msr1_ota/run_fsx_chunk_optimization.py <BLE_ADDR>`
+   - Phase 6: `msr1_ota/run_ota_regression_10.py <BLE_ADDR> [N]`
+   - Phase 7: `msr1_ota/run_stress_fsx_ota.py <BLE_ADDR> [--fsx 200] [--ota 20] [--interleave]`
+
+4. **Workflow**: Modify → build → run → test. On failure: inspect logs, fix, retry. Do not stop on first failure; retry until build succeeds, app runs, and tests pass.
+
+5. **ESP32-C6 WiFi / "not connecting"**: Debug with serial. Connect device via USB and run `python3 msr1_esp32c6/scripts/serial_check_wifi.py /dev/ttyACM0 35` to capture boot and WiFi logs — confirms whether the device got an IP, got disconnected, or had auth failure. See `msr1_esp32c6/docs/SERIAL_DEBUG.md`.

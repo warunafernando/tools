@@ -9,9 +9,25 @@ import glob
 import json
 import time
 import asyncio
+import fcntl
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify
+
+BLE_LOCK_FILE = "/var/lock/smartball_ble.lock"
+
+
+@contextmanager
+def _ble_lock():
+    """Acquire BLE exclusivity lock (Phase 1). Use for OTA and FSX. Blocks until acquired."""
+    lock_fd = os.open(BLE_LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 app = Flask(__name__)
 TOOLS_DIR = Path(__file__).resolve().parents[2]
@@ -30,6 +46,113 @@ BT_OFF_HINTS = ("network is down", "no default controller", "org.bluez", "connec
 
 # Server-side BLE connection: after scan+connect, address is stored. Kept until OTA (never user-disconnect).
 _connected_ble_addr = None
+
+# WiFi (ESP32-C6): discovered device URL from GET /api/ip scan. Set on startup and in background.
+_wifi_device_url = None
+
+_WIFI_URL_FILE = Path(__file__).resolve().parent / ".wifi_device_url"
+
+
+def _wifi_ping_url(url: str) -> bool:
+    """Return True if GET url/api/ip succeeds."""
+    try:
+        import requests
+        r = requests.get(f"{url.rstrip('/')}/api/ip", timeout=3)
+        return r.status_code == 200 and bool((r.text or "").strip())
+    except Exception:
+        return False
+
+
+def _load_saved_wifi_url() -> str | None:
+    """Return saved device URL from file or None."""
+    try:
+        if _WIFI_URL_FILE.is_file():
+            u = _WIFI_URL_FILE.read_text().strip()
+            if u and u.startswith("http"):
+                return u.rstrip("/")
+    except Exception:
+        pass
+    return None
+
+
+def _save_wifi_url(url: str) -> None:
+    """Persist device URL for next startup."""
+    try:
+        _WIFI_URL_FILE.write_text(url.rstrip("/"))
+    except Exception:
+        pass
+
+
+def _try_connect_wifi():
+    """Probe for SmartBall ESP32-C6 on local network (GET /api/ip). Sets _wifi_device_url on success."""
+    global _wifi_device_url
+    try:
+        import requests
+    except ImportError:
+        return False
+    # Quick list: common subnets and likely IPs (same network as host, or common defaults)
+    quick_ips = [
+        "192.168.68.89", "192.168.68.2", "192.168.68.100", "192.168.68.254",
+        "192.168.4.1", "192.168.4.2",  # AP mode
+        "192.168.1.254", "192.168.1.100", "192.168.1.2",
+    ]
+    for ip in quick_ips:
+        try:
+            r = requests.get(f"http://{ip}/api/ip", timeout=0.6)
+            if r.status_code == 200 and r.text and r.text.strip():
+                _wifi_device_url = f"http://{ip}"
+                _save_wifi_url(_wifi_device_url)
+                return True
+        except Exception:
+            continue
+    # Optional: scan current subnet (e.g. 192.168.68.2–30) in one pass
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        prefix = ".".join(local_ip.split(".")[:3])
+        for i in (89, 2, 1, 100, 50, 254) + tuple(range(3, 30)):
+            if f"{prefix}.{i}" in quick_ips:
+                continue
+            ip = f"{prefix}.{i}"
+            try:
+                r = requests.get(f"http://{ip}/api/ip", timeout=0.5)
+                if r.status_code == 200 and r.text and r.text.strip():
+                    _wifi_device_url = f"http://{ip}"
+                    _save_wifi_url(_wifi_device_url)
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def _try_connect_wifi_quick(max_ips: int = 6):
+    """Like _try_connect_wifi but only tries first max_ips from quick_ips (fast startup)."""
+    global _wifi_device_url
+    try:
+        import requests
+    except ImportError:
+        return False
+    quick_ips = [
+        "192.168.68.89", "192.168.68.2", "192.168.68.100", "192.168.4.1",
+        "192.168.1.254", "192.168.1.100",
+    ]
+    for ip in quick_ips[:max_ips]:
+        try:
+            r = requests.get(f"http://{ip}/api/ip", timeout=0.5)
+            if r.status_code == 200 and r.text and r.text.strip():
+                _wifi_device_url = f"http://{ip}"
+                _save_wifi_url(_wifi_device_url)
+                return True
+        except Exception:
+            continue
+    return False
+
 
 # Background thread: connect to SmartBall at backend start, keep trying until found
 def _try_connect_smartball():
@@ -85,13 +208,27 @@ def _try_connect_smartball():
 
 
 def _background_connect_loop():
-    """Daemon thread: poll for SmartBall until connected."""
+    """Daemon thread: poll for BLE and WiFi SmartBall until connected."""
+    global _wifi_device_url
+    _try_connect_wifi()  # check once at thread start
     while True:
         if _connected_ble_addr:
-            time.sleep(10)  # already connected, check occasionally
+            time.sleep(10)
+            if not _wifi_device_url:
+                saved = _load_saved_wifi_url()
+                if saved and _wifi_ping_url(saved):
+                    _wifi_device_url = saved
+                else:
+                    _try_connect_wifi()
             continue
         _try_connect_smartball()
-        time.sleep(8)  # poll interval when not connected
+        if not _wifi_device_url:
+            saved = _load_saved_wifi_url()
+            if saved and _wifi_ping_url(saved):
+                _wifi_device_url = saved
+            else:
+                _try_connect_wifi()
+        time.sleep(8)
 
 
 def _stop_ble_scan():
@@ -468,15 +605,26 @@ def ensure_bt():
 
 @app.route("/api/connection", methods=["GET"])
 def get_connection():
-    """Return BLE adapter status and SmartBall connection status.
-    If BT adapter is off, connected is always False (we cannot be connected)."""
+    """Return BLE and WiFi connection status. WiFi: url discovered on startup/background scan.
+    Optional query param device_url: if provided and we're not connected, try to ping it and set as connected."""
+    global _wifi_device_url
+    device_url_param = (request.args.get("device_url") or "").strip()
+    if device_url_param and not _wifi_device_url:
+        if not device_url_param.startswith("http"):
+            device_url_param = "http://" + device_url_param
+        if _wifi_ping_url(device_url_param):
+            _wifi_device_url = device_url_param.rstrip("/")
+            _save_wifi_url(_wifi_device_url)
     bt_up = _is_bluetooth_up()
     connected = bt_up and _connected_ble_addr is not None
-    return jsonify({
+    out = {
         "bt_enabled": bt_up,
         "connected": connected,
         "address": _connected_ble_addr if connected else None,
-    })
+        "wifi_device_url": _wifi_device_url,
+        "wifi_connected": _wifi_device_url is not None,
+    }
+    return jsonify(out)
 
 
 @app.route("/api/check-cached", methods=["GET"])
@@ -756,22 +904,98 @@ def activate_version():
     return jsonify({"ok": code == 0, "stdout": out, "stderr": err, "error": None if code == 0 else (err or out)})
 
 
-# --- BLE Binary Protocol (SVB1) API ---
+# --- BLE / WiFi Binary Protocol API ---
 def _get_binary_addr():
     return _connected_ble_addr or (request.get_json(silent=True) or {}).get("address") or (request.args.get("address"))
 
 
+def _is_wifi_request(data=None):
+    """True if this request targets WiFi device (ESP32-C6)."""
+    data = data or request.get_json(silent=True) or {}
+    return data.get("transport") == "wifi" or data.get("device_url")
+
+
+def _get_device_url(data=None):
+    """WiFi device URL (e.g. http://192.168.68.89). None if BLE."""
+    data = data or request.get_json(silent=True) or {}
+    url = (data.get("device_url") or "").strip()
+    if not url:
+        return None
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "http://" + url
+    return url.rstrip("/")
+
+
+def _do_wifi_ping(url: str, retries: int = 2):
+    """Ping device at url (GET /api/ip). Returns (ok, ip_or_error)."""
+    import requests
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return False, "device_url required"
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "http://" + url
+    last_err = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(f"{url}/api/ip", timeout=6)
+            r.raise_for_status()
+            ip = (r.text or "").strip()
+            return True, ip or url
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(1.5)
+    msg = str(last_err)
+    if "No route to host" in msg or "Connection refused" in msg or "113" in msg:
+        msg = msg + " — Run the backend on a machine that is on the same WiFi as the ESP32."
+    return False, msg
+
+
+@app.route("/api/wifi/ping", methods=["GET", "POST"])
+def wifi_ping():
+    """Check WiFi device reachability (GET /api/ip). Returns ok, ip, error. On success, stores url so LED stays green.
+    GET: ?device_url=http://192.168.68.89   POST: JSON { \"device_url\": \"http://...\" }"""
+    global _wifi_device_url
+    url = None
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        url = _get_device_url(data)
+    if not url:
+        url = (request.args.get("device_url") or "").strip()
+    if url:
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "http://" + url
+        url = url.rstrip("/")
+    if not url:
+        return jsonify({"ok": False, "error": "device_url required", "ip": None})
+    ok, result = _do_wifi_ping(url)
+    if ok:
+        _wifi_device_url = url.rstrip("/")
+        _save_wifi_url(_wifi_device_url)
+        return jsonify({"ok": True, "ip": result, "error": None})
+    return jsonify({"ok": False, "ip": None, "error": result})
+
+
 @app.route("/api/binary/send", methods=["POST"])
 def binary_send():
-    """Send a binary protocol command. Requires BLE connected (use address from scan)."""
+    """Send a binary protocol command. BLE: address from scan. WiFi: device_url (e.g. http://192.168.68.89)."""
     data = request.get_json() or {}
+    transport = (data.get("transport") or ("wifi" if data.get("device_url") else "ble")).lower()
+    device_url = _get_device_url(data)
     addr = data.get("address") or _connected_ble_addr
+
+    if transport == "wifi":
+        if not device_url:
+            return jsonify({"ok": False, "error": "WiFi: device_url required (e.g. http://192.168.68.89).", "response": None}), 400
+    else:
+        if not addr:
+            return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "response": None}), 400
+
     cmd_name = (data.get("cmd") or "").upper()
     payload_hex = data.get("payload", "")
-    if not addr:
-        return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "response": None}), 400
+
     from ble_binary_client import (
-        make_frame, send_binary_cmd_sync, format_response,
+        make_frame, format_response,
         CMD_ID, CMD_STATUS, CMD_DIAG, CMD_SELFTEST, CMD_CLEAR_ERRORS,
         CMD_SET, CMD_GET_CFG, CMD_SAVE_CFG, CMD_LOAD_CFG, CMD_FACTORY_RESET,
         CMD_START_RECORD, CMD_STOP_RECORD, CMD_LIST_SHOTS, CMD_GET_SHOT, CMD_DEL_SHOT,
@@ -790,24 +1014,48 @@ def binary_send():
         return jsonify({"ok": False, "error": f"Unknown cmd: {cmd_name}", "response": None}), 400
     payload = bytes.fromhex(payload_hex.replace(" ", "")) if payload_hex else None
     if cmd_name == "GET_CFG" and not payload_hex:
-        payload = b"\x00"  # get all
-    # Firmware rejects plen=0; use dummy byte for cmds that need no payload
+        payload = b"\x00"
     if payload is not None and len(payload) == 0:
         payload = b"\x00"
     frame = make_frame(cmd_id, payload=payload) if payload else make_frame(cmd_id)
-    rsp, err = send_binary_cmd_sync(addr, frame)
+
+    if transport == "wifi":
+        from wifi_binary_client import send_binary_cmd
+        rsp, err = send_binary_cmd(device_url, frame)
+    else:
+        from ble_binary_client import send_binary_cmd_sync
+        rsp, err = send_binary_cmd_sync(addr, frame)
+
     if err:
+        if "No route to host" in err or "Connection refused" in err or "Failed to establish" in err or "113" in err:
+            err = (
+                err + "\n\n"
+                "The machine RUNNING THE BACKEND (the Python server) must be on the same WiFi/LAN as the ESP32. "
+                "Your browser can be on any device; the backend does the HTTP requests to the ESP32.\n"
+                "• Run the backend on a PC/laptop that is connected to the same WiFi as the ESP32 (e.g. SinhaleD).\n"
+                "• Ensure the ESP32 is on and has joined WiFi (serial or router DHCP list for IP).\n"
+                "• If the ESP32 was just reflashed or rebooted, its IP may have changed — use Ping with the new IP or run serial_check_wifi.py to see the current IP.\n"
+                "• Debug with serial: plug ESP32 via USB and run: python3 msr1_esp32c6/scripts/serial_check_wifi.py /dev/ttyACM0 35 — to confirm device IP and WiFi status."
+            )
         return jsonify({"ok": False, "error": err, "response": None})
     if not rsp:
         return jsonify({"ok": False, "error": "No response from device (timeout or disconnected).", "response": "(no response)"})
     formatted = format_response(rsp)
+    if transport == "wifi" and cmd_name == "BUS_SCAN" and len(rsp) >= 1 and rsp[0] == 0x86:
+        formatted = (
+            "Device returned STATUS (0x86) instead of BUS_SCAN (0x89). "
+            "Reflash ESP32-C6 firmware (idf.py flash) to get BUS_SCAN support.\n\n"
+            + formatted
+        )
     return jsonify({"ok": True, "response": formatted, "raw_hex": rsp.hex()})
 
 
 @app.route("/api/chip/read", methods=["POST"])
 def chip_read():
-    """Read from SPI chip register (BLE). cs: 0=LSM6, 1=ADXL. reg and len in decimal or hex."""
+    """Read from SPI chip register (BLE only). cs: 0=LSM6, 1=ADXL. WiFi/ESP32-C6 has no SPI sensors."""
     data = request.get_json() or {}
+    if _is_wifi_request(data):
+        return jsonify({"ok": False, "error": "SPI chip access not supported over WiFi (ESP32-C6 has no SPI sensors).", "data_hex": None}), 400
     addr = data.get("address") or _connected_ble_addr
     if not addr:
         return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "data_hex": None}), 400
@@ -830,8 +1078,10 @@ def chip_read():
 
 @app.route("/api/chip/write", methods=["POST"])
 def chip_write():
-    """Write to SPI chip register (BLE). cs: 0=LSM6, 1=ADXL. data_hex: hex string."""
+    """Write to SPI chip register (BLE only). WiFi/ESP32-C6 has no SPI sensors."""
     data = request.get_json() or {}
+    if _is_wifi_request(data):
+        return jsonify({"ok": False, "error": "SPI chip access not supported over WiFi (ESP32-C6 has no SPI sensors)."}), 400
     addr = data.get("address") or _connected_ble_addr
     if not addr:
         return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first."}), 400
@@ -855,59 +1105,100 @@ def chip_write():
     return jsonify({"ok": True})
 
 
+def _normalize_shot_id(shot_id):
+    """Convert shot_id from JSON (int or hex/dec string) to int."""
+    if isinstance(shot_id, int):
+        return shot_id
+    if shot_id is None:
+        return None
+    s = str(shot_id).strip()
+    if s.startswith("0x") or s.startswith("0X"):
+        return int(s, 16)
+    return int(s, 10)
+
+
 @app.route("/api/shot/fetch", methods=["POST"])
 def shot_fetch():
-    """Fetch shot data (chunked if >240B). Returns raw_hex of full SVTSHOT3 payload."""
-    data = request.get_json() or {}
-    addr = data.get("address") or _connected_ble_addr
-    shot_id = data.get("shot_id")
-    size = data.get("size", 0)
-    if not addr:
-        return jsonify({"ok": False, "error": "Not connected.", "raw_hex": None}), 400
-    if shot_id is None:
-        return jsonify({"ok": False, "error": "shot_id required.", "raw_hex": None}), 400
-    _prepare_ble_gentle(addr)
-    from ble_binary_client import (
-        fetch_shot_one_connection_sync,
-        fetch_shot_chunked_sync,
-        _is_disconnect_error,
-    )
-    import struct
-    # Primary: one connection, chunk=240, delay=0.04s (~24s for 15KB, tested 10/10 pass)
-    payload, err = fetch_shot_one_connection_sync(
-        addr, shot_id, size,
-        chunk_size=240,
-        timeout_per_chunk=8.0,
-        delay_between_chunks_sec=0.04,
-    )
-    if err and _is_disconnect_error(err):
-        payload, err = fetch_shot_chunked_sync(
-            addr, shot_id, size,
-            chunk_size=240,
-            timeout_per_chunk=5.0,
-            between_segment_callback=lambda _: (_prepare_ble_gentle(addr), time.sleep(2)),
-        )
-    if err:
-        return jsonify({"ok": False, "error": err, "raw_hex": None})
-    if not payload or len(payload) < 8:
-        return jsonify({"ok": False, "error": "Incomplete fetch.", "raw_hex": None})
-    if len(payload) < size:
-        return jsonify({"ok": False, "error": f"Incomplete fetch (got {len(payload)} bytes, expected at least {size}).", "raw_hex": None})
-    if payload[:8] != b"SVTSHOT3":
-        return jsonify({"ok": False, "error": "Shot data invalid (chunks out of order or corrupted).", "raw_hex": None})
-    # Validate length from header so frontend parser won't fail (expectedLen = 24 + count*sampleSize + 4)
-    if len(payload) >= 24:
-        count = struct.unpack_from("<I", payload, 12)[0]
-        imu_mask = payload[17]
-        sample_size = 68 if (imu_mask & 0x06) else 28
-        expected_len = 24 + count * sample_size + 4
-        if len(payload) < expected_len:
-            return jsonify({
-                "ok": False,
-                "error": f"Shot truncated (expected {expected_len} bytes from header, got {len(payload)}).",
-                "raw_hex": None,
-            })
-    return jsonify({"ok": True, "raw_hex": payload.hex()})
+    """Fetch shot data. BLE: chunked. WiFi: use wifi_binary_client.fetch_shot_chunked_sync."""
+    try:
+        data = request.get_json() or {}
+        transport = (data.get("transport") or ("wifi" if data.get("device_url") else "ble")).lower()
+        device_url = _get_device_url(data)
+        addr = (data.get("address") or _connected_ble_addr or "").strip()
+        shot_id = data.get("shot_id")
+        size = data.get("size", 0)
+
+        if transport == "wifi":
+            if not device_url:
+                return jsonify({"ok": False, "error": "WiFi: device_url required.", "raw_hex": None}), 400
+        else:
+            if not addr:
+                return jsonify({"ok": False, "error": "Not connected.", "raw_hex": None}), 400
+
+        if shot_id is None:
+            return jsonify({"ok": False, "error": "shot_id required.", "raw_hex": None}), 400
+        shot_id = _normalize_shot_id(shot_id)
+        size = int(size) if size is not None else 0
+        size = max(0, min(size, 1024 * 1024))
+
+        if transport == "wifi":
+            from wifi_binary_client import fetch_shot_chunked_sync
+            payload, err = fetch_shot_chunked_sync(device_url, shot_id, size, chunk_size=495, timeout_per_chunk=10.0)
+        else:
+            try:
+                subprocess.run(["bluetoothctl", "disconnect", addr], capture_output=True, timeout=5, env=_env())
+            except Exception:
+                pass
+            time.sleep(3)
+            _prepare_ble_gentle(addr)
+            from ble_binary_client import (
+                fetch_shot_one_connection_sync,
+                fetch_shot_chunked_sync,
+                _is_disconnect_error,
+            )
+            import struct
+            payload, err = fetch_shot_chunked_sync(
+                addr, shot_id, size,
+                chunk_size=495,
+                timeout_per_chunk=18.0,
+                between_segment_callback=lambda _: (_prepare_ble_gentle(addr), time.sleep(2)),
+            )
+            if err and (_is_disconnect_error(err) or "chunk failed" in (err or "").lower() or "incomplete fetch" in (err or "").lower()):
+                time.sleep(2)
+                _prepare_ble_gentle(addr)
+                payload2, err2 = fetch_shot_one_connection_sync(
+                    addr, shot_id, size,
+                    chunk_size=495,
+                    timeout_per_chunk=20.0,
+                    delay_between_chunks_sec=0.02,
+                )
+                if not err2 and payload2:
+                    payload, err = payload2, None
+
+        if err:
+            return jsonify({"ok": False, "error": err, "raw_hex": None})
+        if not payload or len(payload) < 8:
+            return jsonify({"ok": False, "error": "Incomplete fetch.", "raw_hex": None})
+        if payload[:8] != b"SVTSHOT3":
+            return jsonify({"ok": False, "error": "Shot data invalid (chunks out of order or corrupted).", "raw_hex": None})
+        if len(payload) >= 24:
+            count = struct.unpack_from("<I", payload, 12)[0]
+            imu_mask = payload[17]
+            sample_size = 68 if (imu_mask & 0x06) else 28
+            expected_len = 24 + count * sample_size + 4
+            if count > 0 and expected_len <= 1024 * 1024 and len(payload) < expected_len:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Shot truncated (expected {expected_len} bytes from header, got {len(payload)}).",
+                    "raw_hex": None,
+                })
+        return jsonify({"ok": True, "raw_hex": payload.hex()})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": f"Invalid request: {e}", "raw_hex": None}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e), "raw_hex": None}), 500
 
 
 def _ensure_saved_shots_dir():
@@ -989,17 +1280,23 @@ def saved_shot_save():
     try:
         with open(path, "w") as f:
             json.dump(rec, f, indent=2)
-        if addr and shot_id is not None:
+        device_url = _get_device_url(data)
+        if (addr or device_url) and shot_id is not None:
             try:
-                from ble_binary_client import make_frame, send_binary_cmd_sync, CMD_DEL_SHOT
+                from ble_binary_client import make_frame, CMD_DEL_SHOT
                 import struct
                 frame = make_frame(CMD_DEL_SHOT, payload=struct.pack("<I", int(shot_id)))
-                _, err = send_binary_cmd_sync(addr, frame)
+                if device_url:
+                    from wifi_binary_client import send_binary_cmd
+                    _, err = send_binary_cmd(device_url, frame)
+                else:
+                    from ble_binary_client import send_binary_cmd_sync
+                    _, err = send_binary_cmd_sync(addr, frame)
                 if err:
                     return jsonify({"ok": True, "id": sid, "name": name, "deleted": False, "delete_error": err})
             except Exception as e:
                 return jsonify({"ok": True, "id": sid, "name": name, "deleted": False, "delete_error": str(e)})
-        return jsonify({"ok": True, "id": sid, "name": name, "deleted": bool(addr and shot_id is not None)})
+        return jsonify({"ok": True, "id": sid, "name": name, "deleted": bool((addr or device_url) and shot_id is not None)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "id": None}), 500
 
@@ -1019,19 +1316,25 @@ def saved_shot_delete(sid):
 
 @app.route("/api/shot/delete", methods=["POST"])
 def shot_delete():
-    """Delete shot from device (CMD_DEL_SHOT)."""
+    """Delete shot from device (CMD_DEL_SHOT). BLE or WiFi."""
     data = request.get_json() or {}
+    device_url = _get_device_url(data)
     addr = data.get("address") or _connected_ble_addr
     shot_id = data.get("shot_id")
-    if not addr:
-        return jsonify({"ok": False, "error": "Not connected."}), 400
+    if not addr and not device_url:
+        return jsonify({"ok": False, "error": "Not connected. Scan BLE or set device_url for WiFi."}), 400
     if shot_id is None:
         return jsonify({"ok": False, "error": "shot_id required."}), 400
-    from ble_binary_client import make_frame, send_binary_cmd_sync, CMD_DEL_SHOT
+    from ble_binary_client import make_frame, CMD_DEL_SHOT
     import struct
     payload = struct.pack("<I", int(shot_id)) if isinstance(shot_id, (int, float)) else bytes.fromhex(str(shot_id).replace(" ", ""))
     frame = make_frame(CMD_DEL_SHOT, payload=payload)
-    rsp, err = send_binary_cmd_sync(addr, frame)
+    if device_url:
+        from wifi_binary_client import send_binary_cmd
+        rsp, err = send_binary_cmd(device_url, frame)
+    else:
+        from ble_binary_client import send_binary_cmd_sync
+        rsp, err = send_binary_cmd_sync(addr, frame)
     if err:
         return jsonify({"ok": False, "error": err})
     return jsonify({"ok": True})
@@ -1039,8 +1342,11 @@ def shot_delete():
 
 @app.route("/api/binary/tests", methods=["POST"])
 def binary_tests():
-    """Run all 22 BLE unit tests. Returns pass/fail count and log."""
-    addr = (request.get_json(silent=True) or {}).get("address") or _connected_ble_addr
+    """Run all 22 BLE unit tests. Returns pass/fail count and log. (WiFi: N/A, use Device tab commands.)"""
+    data = request.get_json(silent=True) or {}
+    if _is_wifi_request(data):
+        return jsonify({"ok": True, "passed": 0, "total": 0, "log": "BLE unit tests are for BLE only. For WiFi (ESP32-C6) use Device / Diagnostics tabs (ID, STATUS, DIAG, SELFTEST)."})
+    addr = data.get("address") or _connected_ble_addr
     if not addr:
         return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first.", "passed": 0, "total": 0, "log": ""}), 400
     import subprocess
@@ -1099,13 +1405,31 @@ def _upgrade_impl():
     else:
         base = None
     if base is not None:
-        # Release BLE so smpmgr gets clean connection. Use gentle prep (no bluetooth restart)
-        # to avoid "No Bluetooth adapters found" after systemctl restart bluetooth.
-        if transport == "ble":
-            _prepare_ble_gentle(addr)
-        # Erase slot 1 first to free it (avoids NO_FREE_SLOT when both slots full)
-        _run(base + ["image", "erase", "1"], timeout=120)
         cmd = base + ["upgrade", "--slot", "1", image]
+
+        def _run_ota():
+            if transport == "ble":
+                _prepare_ble_gentle(addr)
+            _run(base + ["image", "erase", "1"], timeout=120)
+            if transport == "ble":
+                time.sleep(5)  # BlueZ needs time between erase and upgrade (avoids rc=9)
+            c, o, e = _run(cmd)
+            if c != 0 and "NO_FREE_SLOT" in (e or o or ""):
+                _run(base + ["image", "erase", "1"], timeout=120)
+                if transport == "ble":
+                    time.sleep(5)
+                c, o, e = _run(cmd)
+            if transport == "ble" and c != 0 and _ble_needs_recovery(e, o):
+                _prepare_ble_gentle(addr)
+                c, o, e = _run(cmd)
+            if transport == "ble":
+                _restart_ble_autoconnect()
+            return c, o, e
+
+        # BLE: acquire exclusivity lock (Phase 1) for entire OTA sequence
+        lock_ctx = _ble_lock() if transport == "ble" else __import__("contextlib").nullcontext()
+        with lock_ctx:
+            code, out, err = _run_ota()
     elif transport == "debugger":
         # Build selected version into workspace, then flash
         v = "v1" if "v1" in image else "v2"
@@ -1143,24 +1467,120 @@ west build -b xiao_ble_sense nrf/app --sysbuild --pristine -- \\
         return jsonify({"ok": r.returncode == 0, "stdout": r.stdout, "stderr": r.stderr, "error": None if r.returncode == 0 else (r.stderr or r.stdout)})
     else:
         return jsonify({"error": "transport must be serial, ble, or debugger"}), 400
-    code, out, err = _run(cmd)
-    # Retry: if NO_FREE_SLOT, erase slot 1 again and retry upgrade
-    if code != 0 and base is not None and "NO_FREE_SLOT" in (err or out or ""):
-        _run(base + ["image", "erase", "1"], timeout=120)
-        code, out, err = _run(cmd)
-    if transport == "ble" and code != 0 and _ble_needs_recovery(err, out):
-        _prepare_ble_gentle(addr)
-        code, out, err = _run(cmd)
-    if transport == "ble":
-        _restart_ble_autoconnect()
+    if base is None:  # debugger path returns earlier
+        pass
     err_msg = None if code == 0 else (err or out)
     if code != 0 and "NO_FREE_SLOT" in (err_msg or ""):
         err_msg = (err_msg or "") + "\n\nTo fix: flash firmware once via Debugger. prj.conf has CONFIG_MCUMGR_GRP_IMG_ALLOW_ERASE_PENDING."
     return jsonify({"ok": code == 0, "stdout": out, "stderr": err, "error": err_msg})
 
 
+@app.route("/api/fsx/push", methods=["POST"])
+def fsx_push_api():
+    """FSX push: transfer file to SmartBall via mcumgr group 66 (FSX).
+    Uses MGMT_OP_WRITE=2, chunk 256 (Phase 5 best). Requires BLE connected."""
+    data = request.get_json() or {}
+    addr = data.get("address") or data.get("addr") or _connected_ble_addr
+    if not addr:
+        return jsonify({"ok": False, "error": "Not connected. Scan for SmartBall first."}), 400
+    use_test = data.get("test", True)  # default: 15KB test payload
+    chunk_len = int(data.get("chunk_len", 256))  # Phase 5 best
+    FSX_PUSH = Path(__file__).resolve().parent / "fsx_push.py"
+    if not FSX_PUSH.is_file():
+        return jsonify({"ok": False, "error": "fsx_push.py not found"}), 500
+    test_file = "/tmp/fsx_gui_15k.bin"
+    if use_test:
+        Path(test_file).write_bytes(bytes(15360))
+    file_path = data.get("file") or (test_file if use_test else None)
+    if not file_path or not Path(file_path).is_file():
+        return jsonify({"ok": False, "error": "No file. Use test=true or provide valid file path."}), 400
+    env = _env()
+    env["SMARTBALL_SKIP_LOCK"] = "1"  # web GUI holds _ble_lock
+    # Disconnect device and wait (like smoke_ble) so FSX gets clean connection
+    try:
+        subprocess.run(["bluetoothctl", "disconnect", addr], capture_output=True, timeout=5, env=_env())
+    except Exception:
+        pass
+    time.sleep(3)
+    try:
+        with _ble_lock():
+            r = subprocess.run(
+                [sys.executable, str(FSX_PUSH), addr, str(file_path), str(chunk_len)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                cwd=str(TOOLS_DIR),
+                env=env,
+            )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "FSX timed out (180s)", "elapsed_s": 180})
+    out = (r.stdout or "").strip()
+    err = (r.stderr or "").strip()
+    ok = r.returncode == 0
+    elapsed = 0.0
+    kbps = 0.0
+    retries = 0
+    for line in out.splitlines():
+        if "Time_s:" in line:
+            try:
+                elapsed = float(line.split("Time_s:")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                pass
+        if "KBps:" in line:
+            try:
+                kbps = float(line.split("KBps:")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                pass
+        if "Retries:" in line:
+            try:
+                retries = int(line.split("Retries:")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                pass
+    return jsonify({
+        "ok": ok,
+        "stdout": out,
+        "stderr": err,
+        "error": None if ok else (err or out),
+        "elapsed_s": elapsed,
+        "kbps": kbps,
+        "retries": retries,
+    })
+
+
 if __name__ == "__main__":
     import threading
+    import socket
+    print("SmartBall OTA GUI: connecting to WiFi device...")
+    # 1) Try env SMARTBALL_WIFI_URL (e.g. export SMARTBALL_WIFI_URL=http://192.168.68.89)
+    env_url = os.environ.get("SMARTBALL_WIFI_URL", "").strip()
+    if env_url and not env_url.startswith("http"):
+        env_url = "http://" + env_url
+    if env_url and _wifi_ping_url(env_url):
+        _wifi_device_url = env_url.rstrip("/")
+        _save_wifi_url(_wifi_device_url)
+        print("  WiFi device: %s (from SMARTBALL_WIFI_URL)" % _wifi_device_url)
+    else:
+        saved = _load_saved_wifi_url()
+        if saved and _wifi_ping_url(saved):
+            _wifi_device_url = saved
+            print("  WiFi device: %s (saved)" % _wifi_device_url)
+        else:
+            if saved:
+                print("  Saved URL %s unreachable (ensure device is on and on same network)" % saved)
+            _try_connect_wifi_quick()
+            if _wifi_device_url:
+                print("  WiFi device: %s" % _wifi_device_url)
+            else:
+                print("  WiFi device: not found (set SMARTBALL_WIFI_URL or Ping once from GUI)")
     t = threading.Thread(target=_background_connect_loop, daemon=True)
     t.start()
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        lan_ip = "127.0.0.1"
+    print("SmartBall OTA GUI: http://127.0.0.1:5050  or  http://%s:5050" % lan_ip)
     app.run(host="0.0.0.0", port=5050, debug=False)

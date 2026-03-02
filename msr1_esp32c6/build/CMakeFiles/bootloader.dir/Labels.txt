@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/home/mini/tools/msr1_esp32c6/build/CMakeFiles/bootloader
+/home/mini/tools/msr1_esp32c6/build/CMakeFiles/bootloader.rule
+/home/mini/tools/msr1_esp32c6/build/CMakeFiles/bootloader-complete.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/home/mini/tools/msr1_esp32c6/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

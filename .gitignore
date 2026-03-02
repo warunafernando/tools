@@ -5,4 +5,5 @@ ncs-workspace/build_*/
 __pycache__/
 msr1_ota/images/*.bin
 msr1_ota/logs/
+msr1_ota/web_gui/.wifi_device_url
 .DS_Store

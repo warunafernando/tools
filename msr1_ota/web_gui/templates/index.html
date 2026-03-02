@@ -64,6 +64,7 @@
   <div class="panel">
     <div class="led-row">
       <span><span id="led-bt" class="led off" title="Bluetooth"></span> BT</span>
+      <span><span id="led-wifi" class="led off" title="WiFi"></span> WiFi</span>
       <span><span id="led-ball" class="led off" title="SmartBall"></span> SmartBall</span>
       <span id="ble-addr-display" style="font-size:0.85rem;"></span>
       <span style="margin-left:1rem;">
@@ -71,10 +72,22 @@
         <button type="button" id="stop-recording-btn" class="cmd-btn" title="Stop recording" disabled>Stop</button>
       </span>
     </div>
-    <div class="row">
+    <div class="row" style="margin-bottom:0.5rem;">
+      <label style="font-size:0.9rem;">Connection:</label>
+      <select id="connection-mode">
+        <option value="wifi" selected>WiFi (ESP32-C6)</option>
+        <option value="ble">BLE (nRF SmartBall)</option>
+      </select>
+    </div>
+    <div id="row-ble" class="row">
       <button id="scan-ble">Scan BLE</button>
       <input type="text" id="ble-addr-input" placeholder="BLE address (e.g. D0:8D:27:9F:56:14)" value="SmartBall" style="min-width:220px;">
       <span style="font-size:0.8rem;color:var(--muted);">Or type address. Connection kept until OTA.</span>
+    </div>
+    <div id="row-wifi" class="row" style="display:none;">
+      <input type="text" id="wifi-device-url" placeholder="http://192.168.68.89" value="http://192.168.68.89" style="min-width:220px;">
+      <button type="button" id="wifi-ping-btn" class="cmd-btn">Ping</button>
+      <span style="font-size:0.8rem;color:var(--muted);">ESP32-C6 URL. Backend must run on same WiFi as device.</span>
     </div>
     <div id="ble-result" class="result" style="display:none;"></div>
   </div>
@@ -118,6 +131,9 @@
         <button id="read-version">Read Version</button>
         <button id="activate-image">Activate</button>
         <select id="activate-slot"><option value="A">Slot A</option><option value="B">Slot B</option></select>
+      </div>
+      <div class="row" style="margin-top:0.75rem;">
+        <button id="fsx-push-btn" class="cmd-btn" title="FSX: transfer 15KB test file via mcumgr group 66 (BLE only)">FSX Push (15KB test)</button>
       </div>
       <div id="ops-result" class="result" style="display:none;"></div>
     </div>
@@ -328,13 +344,75 @@
     const serialPort = { value: "/dev/ttyACM0" };
     const imagePath = { value: null };
 
+    function getConnectionMode() {
+      return (document.getElementById("connection-mode")?.value || "wifi");
+    }
+    function getDeviceUrl() {
+      let url = (document.getElementById("wifi-device-url")?.value || "").trim();
+      if (url && !/^https?:\/\//i.test(url)) url = "http://" + url;
+      return url || null;
+    }
     function getBleAddr() {
       const manual = document.getElementById("ble-addr-input").value.trim();
       return manual || bleAddr.value;
     }
+    /** Returns { transport: 'ble'|'wifi', address: string|null, device_url: string|null } for API body. */
+    function getDeviceTarget() {
+      const mode = getConnectionMode();
+      if (mode === "wifi") {
+        const url = getDeviceUrl();
+        return { transport: "wifi", address: null, device_url: url };
+      }
+      return { transport: "ble", address: getBleAddr(), device_url: null };
+    }
     function getSerialPort() {
       return document.getElementById("serial-port-input").value.trim() || serialPort.value;
     }
+
+    // Connection mode: show BLE or WiFi row
+    document.getElementById("connection-mode").onchange = () => {
+      const mode = getConnectionMode();
+      document.getElementById("row-ble").style.display = mode === "ble" ? "flex" : "none";
+      document.getElementById("row-wifi").style.display = mode === "wifi" ? "flex" : "none";
+      document.getElementById("led-bt").style.display = mode === "ble" ? "inline-block" : "none";
+      document.getElementById("led-wifi").style.display = mode === "wifi" ? "inline-block" : "none";
+      if (mode === "wifi") {
+        document.getElementById("ble-addr-display").innerHTML = getDeviceUrl() ? `WiFi: <span class="addr">${getDeviceUrl()}</span>` : "Enter device URL and Ping.";
+      } else {
+        document.getElementById("ble-addr-display").innerHTML = bleAddr.value ? `Addr: <span class="addr">${bleAddr.value}</span>` : "Searching for SmartBall…";
+      }
+    };
+    document.getElementById("connection-mode").value = "wifi";
+    document.getElementById("connection-mode").dispatchEvent(new Event("change"));
+
+    document.getElementById("wifi-ping-btn").onclick = async () => {
+      const url = getDeviceUrl();
+      if (!url) { setStatusBar("Enter device URL (e.g. http://192.168.68.89).", false); return; }
+      setStatusBar("Pinging " + url + "...");
+      const doPing = () => api("/api/wifi/ping", "POST", { device_url: url });
+      try {
+        let d = await doPing();
+        if (!d.ok && d.error && (d.error.includes("refused") || d.error.includes("ETIMEDOUT") || d.error.includes("timeout"))) {
+          setStatusBar("Retrying in 1.5s...");
+          await new Promise(r => setTimeout(r, 1500));
+          d = await doPing();
+        }
+        if (d.ok) {
+          setStatusBar("WiFi device: " + (d.ip || url), true);
+          document.getElementById("ble-addr-display").innerHTML = `WiFi: <span class="addr">${url}</span> ${d.ip ? "(" + d.ip + ")" : ""}`;
+          document.getElementById("led-ball").className = "led on";
+          document.getElementById("led-wifi").className = "led on";
+        } else {
+          setStatusBar("Ping failed: " + (d.error || "unknown"), false);
+          document.getElementById("led-ball").className = "led off";
+          document.getElementById("led-wifi").className = "led off";
+        }
+      } catch (e) {
+        setStatusBar("Ping error: " + e.message, false);
+        document.getElementById("led-ball").className = "led off";
+        document.getElementById("led-wifi").className = "led off";
+      }
+    };
 
     // Tabs
     document.querySelectorAll(".tab").forEach(t => {
@@ -346,13 +424,22 @@
       };
     });
 
+    function requireDeviceTarget() {
+      const t = getDeviceTarget();
+      if (t.transport === "ble" && !t.address) return { err: "Scan for SmartBall first (BLE)." };
+      if (t.transport === "wifi" && !t.device_url) return { err: "Enter WiFi device URL and Ping." };
+      return { body: t };
+    }
+
     // Binary command buttons
     document.querySelectorAll(".cmd-btn").forEach(btn => {
       btn.onclick = async () => {
         const cmd = btn.dataset.cmd;
-        const addr = getBleAddr();
-        if (!addr) {
-          showBinaryResult(cmd, "Scan for SmartBall first.", false);
+        const r = requireDeviceTarget();
+        if (r.err) {
+          const tab = btn.closest(".tab-content");
+          const resEl = tab ? tab.querySelector(".result") : document.getElementById("device-result");
+          if (resEl) { resEl.style.display = "block"; showEl(resEl, r.err, false); }
           return;
         }
         const resultEl = document.querySelector(`#tab-${btn.closest(".tab-content").id.replace("tab-","")} .result`);
@@ -373,7 +460,7 @@
           payload = uint32(parseInt(id, 10));
         }
         try {
-          const d = await api("/api/binary/send", "POST", { address: addr, cmd, payload });
+          const d = await api("/api/binary/send", "POST", { ...r.body, cmd, payload });
           showEl(resultEl, d.response || d.error, d.ok);
         } catch (e) {
           showEl(resultEl, e.message, false);
@@ -488,8 +575,8 @@
         showEl(document.getElementById("config-result"), "Select a preset first.", false);
         return;
       }
-      const addr = getBleAddr();
-      if (!addr) { showEl(document.getElementById("config-result"), "Scan for SmartBall first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { showEl(document.getElementById("config-result"), r.err, false); return; }
       const el = document.getElementById("config-result");
       el.textContent = "Applying preset...";
       el.className = "result";
@@ -505,10 +592,10 @@
           const klen = key.length + 1;
           const payload = [klen, vbytes.length, ...key.split("").map(c=>c.charCodeAt(0)), 0, ...vbytes]
             .map(x=>x.toString(16).padStart(2,"0")).join("");
-          const d = await api("/api/binary/send", "POST", { address: addr, cmd: "SET", payload });
+          const d = await api("/api/binary/send", "POST", { ...r.body, cmd: "SET", payload });
           if (!d.ok) { showEl(el, d.response || d.error || "SET failed for " + key, false); return; }
         }
-        const save = await api("/api/binary/send", "POST", { address: addr, cmd: "SAVE_CFG", payload: "" });
+        const save = await api("/api/binary/send", "POST", { ...r.body, cmd: "SAVE_CFG", payload: "" });
         showEl(el, save.ok ? ("Preset applied and saved. " + (save.response || "")) : (save.response || save.error || "Save failed"), save.ok);
         if (save.ok) document.getElementById("cfg-preset").value = "";
       } catch (e) { showEl(el, e.message, false); }
@@ -550,14 +637,14 @@
         const klen = k.length + 1;
         const payload = [klen, vbytes.length, ...k.split("").map(c=>c.charCodeAt(0)), 0, ...vbytes]
           .map(x=>x.toString(16).padStart(2,"0")).join("");
-        const addr = getBleAddr();
-        if (!addr) { showEl(document.getElementById("config-result"), "Scan first.", false); return; }
+        const r = requireDeviceTarget();
+        if (r.err) { showEl(document.getElementById("config-result"), r.err, false); return; }
         const el = document.getElementById("config-result");
         el.textContent = "Sending SET...";
         el.className = "result";
         el.style.display = "block";
         try {
-          const d = await api("/api/binary/send", "POST", { address: addr, cmd: "SET", payload });
+          const d = await api("/api/binary/send", "POST", { ...r.body, cmd: "SET", payload });
           showEl(el, d.response || d.error, d.ok);
         } catch (e) { showEl(el, e.message, false); }
       };
@@ -576,14 +663,14 @@
         const b = new ArrayBuffer(4);
         new DataView(b).setUint32(0, v, true);
         const payload = Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
-        const addr = getBleAddr();
-        if (!addr) { showEl(document.getElementById("shots-result"), "Scan first.", false); return; }
+        const r = requireDeviceTarget();
+        if (r.err) { showEl(document.getElementById("shots-result"), r.err, false); return; }
         const el = document.getElementById("shots-result");
         el.textContent = `Sending ${cmd}...`;
         el.className = "result";
         el.style.display = "block";
         try {
-          const d = await api("/api/binary/send", "POST", { address: addr, cmd, payload });
+          const d = await api("/api/binary/send", "POST", { ...r.body, cmd, payload });
           showEl(el, d.response || d.error, d.ok);
         } catch (e) { showEl(el, e.message, false); }
       };
@@ -643,14 +730,14 @@
     }
     document.querySelectorAll(".cmd-btn[data-cmd='GET_CFG']").forEach(btn => {
       btn.onclick = async () => {
-        const addr = getBleAddr();
-        if (!addr) { showEl(document.getElementById("config-result"), "Scan first.", false); return; }
+        const r = requireDeviceTarget();
+        if (r.err) { showEl(document.getElementById("config-result"), r.err, false); return; }
         const el = document.getElementById("config-result");
         el.textContent = "Sending GET_CFG (all)...";
         el.className = "result";
         el.style.display = "block";
         try {
-          const d = await api("/api/binary/send", "POST", { address: addr, cmd: "GET_CFG" });
+          const d = await api("/api/binary/send", "POST", { ...r.body, cmd: "GET_CFG" });
           if (d.ok && d.response && d.response.includes("--- Config ---")) {
             makeConfigClickable(el, d.response);
             el.className = "result ok";
@@ -842,14 +929,14 @@
       return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
     }
     document.getElementById("data-clear-shots").onclick = async () => {
-      const addr = getBleAddr();
-      if (!addr) { showEl(document.getElementById("data-result"), "Scan first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { showEl(document.getElementById("data-result"), r.err, false); return; }
       if (!confirm("Clear all shots on device? (Format storage – cannot undo)")) return;
       const el = document.getElementById("data-result");
       el.style.display = "block";
       el.textContent = "Clearing...";
       try {
-        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "FORMAT_STORAGE" });
+        const d = await api("/api/binary/send", "POST", { ...r.body, cmd: "FORMAT_STORAGE" });
         if (!d.ok) { showEl(el, d.error || "Format failed", false); return; }
         showEl(el, "Storage cleared. Refreshing list.", true);
         dataShotsList = [];
@@ -928,8 +1015,8 @@
       fillEl.style.width = "0%";
     }
     async function doFetchAndPlot(shotIdOrZero) {
-      const addr = getBleAddr();
-      if (!addr) { showEl(document.getElementById("data-result"), "Scan first.", false); setStatusBar("Scan first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { showEl(document.getElementById("data-result"), r.err, false); setStatusBar(r.err, false); return; }
       const el = document.getElementById("data-result");
       el.textContent = "";
       el.className = "result";
@@ -941,7 +1028,7 @@
         if (shotId === 0) {
           if (dataShotsList.length === 0) {
             setStatusBar("Getting shot list...");
-            const listR = await api("/api/binary/send", "POST", { address: addr, cmd: "LIST_SHOTS" });
+            const listR = await api("/api/binary/send", "POST", { ...r.body, cmd: "LIST_SHOTS" });
             if (!listR.ok || !listR.raw_hex) { showEl(el, listR.error || "No shot list", false); setStatusBar(listR.error || "Shot list failed.", false); return; }
             const lbuf = new Uint8Array(listR.raw_hex.match(/.{1,2}/g).map(x=>parseInt(x,16)));
             if (lbuf.length < 4 || lbuf[0] !== 0x8C) { showEl(el, "Invalid RSP_SHOT_LIST", false); setStatusBar("Invalid shot list.", false); return; }
@@ -979,7 +1066,7 @@
         startFetchProgress(size);
         let d;
         try {
-          d = await api("/api/shot/fetch", "POST", { address: addr, shot_id: shotId, size });
+          d = await api("/api/shot/fetch", "POST", { ...r.body, shot_id: shotId, size });
         } finally {
           stopFetchProgress();
         }
@@ -1040,14 +1127,15 @@
         return;
       }
       const name = document.getElementById("data-save-name").value.trim() || ("Shot_" + lastFetchedShotId);
-      const addr = getBleAddr();
+      const t = getDeviceTarget();
       setStatusBar("Saving & clearing from device...");
       try {
         const d = await api("/api/saved-shots", "POST", {
           raw_hex: lastFetchedRawHex,
           shot_id: lastFetchedShotId,
           name,
-          address: addr,
+          address: t.address || undefined,
+          device_url: t.device_url || undefined,
           sample_rate: lastFetchedSampleRate,
           count: lastFetchedCount
         });
@@ -1098,8 +1186,9 @@
     // Chip access tab
     const chipResultEl = document.getElementById("chip-result");
     document.getElementById("chip-read-btn").onclick = async () => {
-      const addr = getBleAddr();
-      if (!addr) { showEl(chipResultEl, "Scan for SmartBall first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { showEl(chipResultEl, r.err, false); return; }
+      if (r.body.transport === "wifi") { showEl(chipResultEl, "SPI not supported over WiFi (ESP32-C6).", false); return; }
       const regStr = document.getElementById("chip-reg").value.trim();
       const reg = regStr.startsWith("0x") ? parseInt(regStr, 16) : parseInt(regStr, 10);
       const len = parseInt(document.getElementById("chip-read-len").value, 10) || 1;
@@ -1108,13 +1197,14 @@
       const cs = parseInt(document.getElementById("chip-cs").value, 10);
       showEl(chipResultEl, "Reading...", true);
       try {
-        const d = await api("/api/chip/read", "POST", { address: addr, cs, reg, len });
+        const d = await api("/api/chip/read", "POST", { ...r.body, cs, reg, len });
         showEl(chipResultEl, d.ok ? `Read ${d.data_hex.length / 2} byte(s): ${d.data_hex}` : (d.error || "Read failed"), !!d.ok);
       } catch (e) { showEl(chipResultEl, e.message, false); }
     };
     document.getElementById("chip-write-btn").onclick = async () => {
-      const addr = getBleAddr();
-      if (!addr) { showEl(chipResultEl, "Scan for SmartBall first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { showEl(chipResultEl, r.err, false); return; }
+      if (r.body.transport === "wifi") { showEl(chipResultEl, "SPI not supported over WiFi (ESP32-C6).", false); return; }
       const regStr = document.getElementById("chip-reg").value.trim();
       const reg = regStr.startsWith("0x") ? parseInt(regStr, 16) : parseInt(regStr, 10);
       const dataHex = (document.getElementById("chip-write-data").value || "").replace(/\s/g, "");
@@ -1123,7 +1213,7 @@
       const cs = parseInt(document.getElementById("chip-cs").value, 10);
       showEl(chipResultEl, "Writing...", true);
       try {
-        const d = await api("/api/chip/write", "POST", { address: addr, cs, reg, data_hex: dataHex });
+        const d = await api("/api/chip/write", "POST", { ...r.body, cs, reg, data_hex: dataHex });
         showEl(chipResultEl, d.ok ? "Write OK." : (d.error || "Write failed"), !!d.ok);
       } catch (e) { showEl(chipResultEl, e.message, false); }
     };
@@ -1137,11 +1227,12 @@
       if (btn.onclick) return; // already set
       btn.onclick = async () => {
         const cmd = btn.dataset.cmd;
-        const addr = getBleAddr();
-        if (!addr) {
+        const r = requireDeviceTarget();
+        if (r.err) {
           const tab = btn.closest(".tab-content");
           const resId = tab?.querySelector(".result")?.id || "device-result";
-          showEl(document.getElementById(resId), "Scan first.", false);
+          const resEl = document.getElementById((tab?.id?.replace("tab-","") || "device") + "-result");
+          if (resEl) { resEl.style.display = "block"; showEl(resEl, r.err, false); }
           return;
         }
         const tabId = btn.closest(".tab-content").id.replace("tab-","");
@@ -1152,21 +1243,21 @@
         el.className = "result";
         el.style.display = "block";
         try {
-          const d = await api("/api/binary/send", "POST", { address: addr, cmd });
+          const d = await api("/api/binary/send", "POST", { ...r.body, cmd });
           showEl(el, d.response || d.error, d.ok);
         } catch (e) { showEl(el, e.message, false); }
       };
     });
 
     document.getElementById("run-ble-tests").onclick = async () => {
-      const addr = getBleAddr();
-      if (!addr) { showEl(document.getElementById("tests-result"), "Scan for SmartBall first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { showEl(document.getElementById("tests-result"), r.err, false); return; }
       const el = document.getElementById("tests-result");
-      el.textContent = "Running 22 BLE tests...";
+      el.textContent = r.body.transport === "wifi" ? "WiFi: running sanity (ID/STATUS)..." : "Running 22 BLE tests...";
       el.className = "result";
       el.style.display = "block";
       try {
-        const d = await api("/api/binary/tests", "POST", { address: addr });
+        const d = await api("/api/binary/tests", "POST", r.body);
         showEl(el, (d.log || "") + "\n\n" + (d.error || "") + "\n--- " + (d.passed||0) + "/" + (d.total||22) + " passed ---", d.ok);
       } catch (e) { showEl(el, e.message, false); }
     };
@@ -1245,9 +1336,10 @@
       const transport = document.getElementById("transport-select").value;
       const path = document.getElementById("image-custom").value.trim() || document.getElementById("image-select").value;
       if (!path) { showEl(document.getElementById("ops-result"), "Select image.", false); return; }
-      if (transport === "ble" && !getBleAddr()) { showEl(document.getElementById("ops-result"), "Scan first.", false); return; }
+      const t = getDeviceTarget();
+      if (transport === "ble" && !t.address) { showEl(document.getElementById("ops-result"), "Scan BLE first.", false); return; }
       const body = { image: path, transport };
-      if (transport === "ble") body.address = getBleAddr();
+      if (transport === "ble") body.address = t.address;
       if (transport === "serial") body.port = getSerialPort();
       showEl(document.getElementById("ops-result"), "Upgrading...", true);
       try {
@@ -1260,7 +1352,7 @@
       const transport = document.getElementById("transport-select").value;
       if (transport === "debugger") { showEl(document.getElementById("ops-result"), "Use BLE or Serial for Read Version.", false); return; }
       const body = { transport };
-      if (transport === "ble") { body.address = getBleAddr(); if (!getBleAddr()) { showEl(document.getElementById("ops-result"), "Scan first.", false); return; } }
+      if (transport === "ble") { const t = getDeviceTarget(); body.address = t.address; if (!t.address) { showEl(document.getElementById("ops-result"), "Scan BLE first.", false); return; } }
       else body.port = getSerialPort();
       showEl(document.getElementById("ops-result"), "Reading...", true);
       try {
@@ -1273,7 +1365,7 @@
       const transport = document.getElementById("transport-select").value;
       if (transport === "debugger") { showEl(document.getElementById("ops-result"), "Use BLE or Serial.", false); return; }
       const body = { transport, slot: document.getElementById("activate-slot").value };
-      if (transport === "ble") { body.address = getBleAddr(); if (!getBleAddr()) { showEl(document.getElementById("ops-result"), "Scan first.", false); return; } }
+      if (transport === "ble") { const t = getDeviceTarget(); body.address = t.address; if (!t.address) { showEl(document.getElementById("ops-result"), "Scan BLE first.", false); return; } }
       else body.port = getSerialPort();
       try {
         const d = await api("/api/version/activate", "POST", body);
@@ -1281,10 +1373,52 @@
       } catch (e) { showEl(document.getElementById("ops-result"), e.message, false); }
     };
 
+    document.getElementById("fsx-push-btn").onclick = async () => {
+      const t = getDeviceTarget();
+      if (t.transport !== "ble" || !t.address) { showEl(document.getElementById("ops-result"), "FSX is BLE only. Scan BLE first.", false); return; }
+      showEl(document.getElementById("ops-result"), "FSX pushing 15KB...", true);
+      try {
+        const d = await api("/api/fsx/push", "POST", { address: t.address, test: true, chunk_len: 256 });
+        const msg = d.ok
+          ? `FSX OK: ${d.elapsed_s?.toFixed(1) || "?"}s, ${d.kbps?.toFixed(2) || "?"} KBps, retries=${d.retries || 0}`
+          : (d.error || d.stderr || d.stdout || "FSX failed");
+        showEl(document.getElementById("ops-result"), msg, d.ok);
+      } catch (e) { showEl(document.getElementById("ops-result"), "FSX error: " + e.message, false); }
+    };
+
     let pollTimer = null;
     async function loadConnectionStatus(refreshOnConnect = false) {
       try {
-        let d = await api("/api/connection");
+        let url = "/api/connection";
+        if (getConnectionMode() === "wifi" && getDeviceUrl()) {
+          url += "?device_url=" + encodeURIComponent(getDeviceUrl());
+        }
+        let d = await api(url);
+        if (d.wifi_device_url) {
+            const w = document.getElementById("wifi-device-url");
+            if (w && (!w.value.trim() || w.value === "http://192.168.68.89")) w.value = d.wifi_device_url;
+        }
+        if (getConnectionMode() === "wifi") {
+          document.getElementById("led-wifi").className = "led " + (d.wifi_connected ? "on" : "off");
+          document.getElementById("led-ball").className = "led " + (d.wifi_connected ? "on" : "off");
+          if (d.wifi_device_url) {
+            document.getElementById("ble-addr-display").innerHTML = "WiFi: <span class=\"addr\">" + d.wifi_device_url + "</span>";
+          } else {
+            document.getElementById("ble-addr-display").innerHTML = "Enter device URL and Ping.";
+          }
+          if (!d.wifi_connected && getDeviceUrl()) {
+            api("/api/wifi/ping", "POST", { device_url: getDeviceUrl() }).then(function(pingRes) {
+              if (pingRes.ok) {
+                document.getElementById("led-wifi").className = "led on";
+                document.getElementById("led-ball").className = "led on";
+                document.getElementById("ble-addr-display").innerHTML = "WiFi: <span class=\"addr\">" + getDeviceUrl() + "</span>";
+              }
+            }).catch(function() {});
+          }
+          var pollMs = d.wifi_connected ? 8000 : 2000;
+          pollTimer = setTimeout(() => loadConnectionStatus(refreshOnConnect), pollMs);
+          return;
+        }
         updateLEDs(d.bt_enabled === true, d.connected === true);
         if (d.connected && d.address) {
           setConnectedUI(true, d.address);
@@ -1311,6 +1445,7 @@
         pollTimer = setTimeout(() => loadConnectionStatus(true), 8000);
       } catch (e) {
         updateLEDs(false, false);
+        setStatusBar("Cannot reach backend. Open http://" + (window.location.host || "localhost:5050") + " and ensure the server is running.", false);
         pollTimer = setTimeout(() => loadConnectionStatus(true), 8000);
       }
     }
@@ -1320,23 +1455,23 @@
     let recordingActive = false;
     let statusPollInterval = null;
     document.getElementById("run-recording-btn").onclick = async () => {
-      const addr = getBleAddr();
-      if (!addr) { setStatusBar("Scan for SmartBall first.", false); return; }
+      const r = requireDeviceTarget();
+      if (r.err) { setStatusBar(r.err, false); return; }
       setStatusBar("Starting recording (continuous)...", true);
       const runBtn = document.getElementById("run-recording-btn");
       const stopBtn = document.getElementById("stop-recording-btn");
       runBtn.disabled = true;
       try {
-        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "START_RECORD", payload: "00" });
+        const d = await api("/api/binary/send", "POST", { ...r.body, cmd: "START_RECORD", payload: "00" });
         if (!d.ok) { setStatusBar("Start failed: " + (d.error || "unknown"), false); runBtn.disabled = false; return; }
         recordingActive = true;
         stopBtn.disabled = false;
         setStatusBar("Recording... Press Stop when done.", true);
         function pollStatus() {
           if (!recordingActive) return;
-          api("/api/binary/send", "POST", { address: addr, cmd: "STATUS", payload: "00" }).then(r => {
-            if (!r.ok || !r.raw_hex) return;
-            const buf = new Uint8Array(r.raw_hex.match(/.{1,2}/g).map(x => parseInt(x, 16)));
+          api("/api/binary/send", "POST", { ...r.body, cmd: "STATUS", payload: "00" }).then(resp => {
+            if (!resp.ok || !resp.raw_hex) return;
+            const buf = new Uint8Array(resp.raw_hex.match(/.{1,2}/g).map(x => parseInt(x, 16)));
             if (buf.length >= 20) {
               const samples = new DataView(buf.buffer).getUint32(16, true);
               setStatusBar("Recording... samples: " + samples, true);
@@ -1348,15 +1483,15 @@
       } catch (e) { setStatusBar("Error: " + e.message, false); runBtn.disabled = false; }
     };
     document.getElementById("stop-recording-btn").onclick = async () => {
-      const addr = getBleAddr();
-      if (!addr) return;
+      const r = requireDeviceTarget();
+      if (r.err) return;
       if (statusPollInterval) { clearInterval(statusPollInterval); statusPollInterval = null; }
       setStatusBar("Stopping recording...", true);
       const runBtn = document.getElementById("run-recording-btn");
       const stopBtn = document.getElementById("stop-recording-btn");
       stopBtn.disabled = true;
       try {
-        const d = await api("/api/binary/send", "POST", { address: addr, cmd: "STOP_RECORD", payload: "00" });
+        const d = await api("/api/binary/send", "POST", { ...r.body, cmd: "STOP_RECORD", payload: "00" });
         recordingActive = false;
         runBtn.disabled = false;
         setStatusBar(d.ok ? "Recording stopped." : ("Stop failed: " + (d.error || "unknown")), d.ok);

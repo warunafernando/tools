@@ -1,0 +1,131 @@
+[0;32mI (121) esp_image: segment 1: paddr=000335b0 vaddr=408000ESP-ROM:esp32c6-20220919
+Build:Sep 19 2022
+rst:0x15 (USB_UART_HPSYS),boot:0x6f (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40805126
+SPIWP:0xee
+mode:DIO, clock div:2
+load:0x4086c410,len:0xd4c
+load:0x4086e610,len:0x2dd4
+load:0x40875728,len:0x17d0
+entry 0x4086c410
+[0;32mI (23) boot: ESP-IDF v5.1.2 2nd stage bootloader[0m
+[0;32mI (23) boot: compile time Mar  2 2026 11:16:05[0m
+[0;32mI (24) boot: chip revision: v0.2[0m
+[0;32mI (26) boot.esp32c6: SPI Speed      : 80MHz[0m
+[0;32mI (31) boot.esp32c6: SPI Mode       : DIO[0m
+[0;32mI (35) boot.esp32c6: SPI Flash Size : 2MB[0m
+[0;32mI (40) boot: Enabling RNG early entropy source...[0m
+[0;32mI (45) boot: Partition Table:[0m
+[0;32mI (49) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (56) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (64) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (71) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (79) boot: End of partition table[0m
+[0;32mI (83) esp_image: segment 0: paddr=00010020 vaddr=42098020 size=23588h (144776) map[0m
+[0;32mI (121) esp_image: segment 1: paddr=000335b0 vaddr=40800000 size=04a68h ( 19048) load[0m
+[0;32mI (127) esp_image: segment 2: paddr=00038020 vaddr=42000020 size=94cd0h (609488) map[0m
+[0;32mI (253) esp_image: segment 3: paddr=000cccf8 vaddr=40804a68 size=125c4h ( 75204) load[0m
+[0;32mI (276) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (277) boot: Disabling RNG early entropy source...[0m
+[0;32mI (288) cpu_start: Unicore app[0m
+[0;32mI (288) cpu_start: Pro cpu up.[0m
+[0;33mW (297) clk: esp_perip_clk_init() has not been implemented yet[0m
+[0;32mI (303) cpu_start: Pro cpu start user code[0m
+[0;32mI (303) cpu_start: cpu freq: 160000000 Hz[0m
+[0;32mI (304) cpu_start: Application information:[0m
+[0;32mI (306) cpu_start: Project name:     smartball_esp32c6[0m
+[0;32mI (312) cpu_start: App version:      2e5aa2a-dirty[0m
+[0;32mI (318) cpu_start: Compile time:     Mar  2 2026 11:15:59[0m
+[0;32mI (324) cpu_start: ELF file SHA256:  6bebc9b264352c03...[0m
+[0;32mI (330) cpu_start: ESP-IDF:          v5.1.2[0m
+[0;32mI (334) cpu_start: Min chip rev:     v0.0[0m
+[0;32mI (339) cpu_start: Max chip rev:     v0.99 [0m
+[0;32mI (344) cpu_start: Chip rev:         v0.2[0m
+[0;32mI (349) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (356) heap_init: At 4081BA40 len 00060BD0 (386 KiB): D/IRAM[0m
+[0;32mI (362) heap_init: At 4087C610 len 00002F54 (11 KiB): STACK/DIRAM[0m
+[0;32mI (369) heap_init: At 50000000 len 00003FE8 (15 KiB): RTCRAM[0m
+[0;32mI (376) spi_flash: detected chip: generic[0m
+[0;32mI (380) spi_flash: flash io: dio[0m
+[0;33mW (384) spi_flash: Detected size(4096k) larger than the size in the binary image header(2048k). Using the size in the binary image header.[0m
+[0;32mI (397) sleep: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (404) sleep: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (411) coexist: coex firmware version: b6d5e8c[0m
+[0;32mI (416) coexist: coexist rom version 5b8dcfa[0m
+[0;32mI (422) app_start: Starting scheduler on CPU0[0m
+[0;32mI (426) main_task: Started on CPU0[0m
+[0;32mI (426) main_task: Calling app_main()[0m
+[0;32mI (426) main: === SmartBall ESP32-C6 WiFi binary protocol (STA) ===[0m
+[0;32mI (436) main: Debug: USB serial 115200 baud, idf.py -p /dev/ttyACM0 monitor[0m
+[0;32mI (456) main: NVS: init OK[0m
+[0;32mI (456) pp: pp rom version: 5b8dcfa[0m
+[0;32mI (456) net80211: net80211 rom version: 5b8dcfa[0m
+[0;32mI (466) wifi:wifi driver task: 40822010, prio:23, stack:6656, core=0[0m
+[0;32mI (466) wifi:wifi firmware version: 91b9630[0m
+[0;32mI (466) wifi:wifi certification version: v7.0[0m
+[0;32mI (466) wifi:config NVS flash: enabled[0m
+[0;32mI (476) wifi:config nano formating: disabled[0m
+[0;32mI (476) wifi:mac_version:HAL_MAC_ESP32AX_761,ut_version:N[0m
+[0;32mI (486) wifi:Init data frame dynamic rx buffer num: 8[0m
+[0;32mI (486) wifi:Init static rx mgmt buffer num: 5[0m
+[0;32mI (496) wifi:Init management short buffer num: 32[0m
+[0;32mI (496) wifi:Init dynamic tx buffer num: 8[0m
+[0;32mI (496) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (506) wifi:Init static rx buffer size: 1700[0m
+[0;32mI (506) wifi:Init static rx buffer num: 4[0m
+[0;32mI (516) wifi:Init dynamic rx buffer num: 8[0m
+[0;32mI (516) wifi_init: rx ba win: 6[0m
+[0;32mI (516) wifi_init: tcpip mbox: 32[0m
+[0;32mI (526) wifi_init: udp mbox: 6[0m
+[0;32mI (526) wifi_init: tcp mbox: 6[0m
+[0;32mI (536) wifi_init: tcp tx win: 5744[0m
+[0;32mI (536) wifi_init: tcp rx win: 5744[0m
+[0;32mI (536) wifi_init: tcp mss: 1440[0m
+[0;32mI (546) wifi_init: WiFi IRAM OP enabled[0m
+[0;32mI (546) wifi_init: WiFi RX IRAM OP enabled[0m
+[0;32mI (556) phy_init: phy_version 230,c773401,Oct 30 2023,15:07:16[0m
+[0;33mW (636) wifi:(bf)761:0x600a7cac:0x01b4b4b0[0m
+[0;33mW (636) wifi:(agc)0x600a7128:0xd20e4800, min.avgNF:0xce->0xd2(dB), RCalCount:0xe4, min.RRssi:0x800(-128.00)[0m
+[0;33mW (636) wifi:(TB)WDEV_PWR_TB_MCS0:19[0m
+[0;33mW (646) wifi:(TB)WDEV_PWR_TB_MCS1:19[0m
+[0;33mW (646) wifi:(TB)WDEV_PWR_TB_MCS2:19[0m
+[0;33mW (646) wifi:(TB)WDEV_PWR_TB_MCS3:19[0m
+[0;33mW (656) wifi:(TB)WDEV_PWR_TB_MCS4:19[0m
+[0;33mW (656) wifi:(TB)WDEV_PWR_TB_MCS5:19[0m
+[0;33mW (656) wifi:(TB)WDEV_PWR_TB_MCS6:18[0m
+[0;33mW (666) wifi:(TB)WDEV_PWR_TB_MCS7:18[0m
+[0;33mW (666) wifi:(TB)WDEV_PWR_TB_MCS8:17[0m
+[0;33mW (666) wifi:(TB)WDEV_PWR_TB_MCS9:15[0m
+[0;33mW (676) wifi:(TB)WDEV_PWR_TB_MCS10:15[0m
+[0;33mW (676) wifi:(TB)WDEV_PWR_TB_MCS11:15[0m
+[0;32mI (676) wifi:11ax coex: WDEVAX_PTI0(0x55777555), WDEVAX_PTI1(0x00003377).[0m
+
+[0;32mI (686) wifi:mode : sta (98:a3:16:8f:ed:cc)[0m
+[0;32mI (686) wifi:enable tsf[0m
+[0;32mI (696) main: WiFi STA_START: driver ready, scanning for SinhaleD[0m
+[0;32mI (696) main: STA started: SSID='SinhaleD' (len 8), pass len 8, hostname=smartball-esp32c6[0m
+[0;32mI (706) main:   MAC: 98:a3:16:8f:ed:cc[0m
+[0;32mI (706) main:   Connecting...[0m
+[0;33mW (5216) main: Waiting for IP... 5s/30s (no CONNECTED/DISCONNECTED = AP 'SinhaleD' not found?)[0m
+[0;33mW (10216) main: Waiting for IP... 10s/30s (no CONNECTED/DISCONNECTED = AP 'SinhaleD' not found?)[0m
+[0;33mW (15216) main: Waiting for IP... 15s/30s (no CONNECTED/DISCONNECTED = AP 'SinhaleD' not found?)[0m
+[0;33mW (20216) main: Waiting for IP... 20s/30s (no CONNECTED/DISCONNECTED = AP 'SinhaleD' not found?)[0m
+[0;33mW (25216) main: Waiting for IP... 25s/30s (no CONNECTED/DISCONNECTED = AP 'SinhaleD' not found?)[0m
+[0;33mW (30216) main: Waiting for IP... 30s/30s (no CONNECTED/DISCONNECTED = AP 'SinhaleD' not found?)[0m
+[0;33mW (30716) main: No IP after 30s. Scanning for visible APs...[0m
+[0;33mW (33216) main:   Found 14 AP(s):[0m
+[0;33mW (33216) main:     [1] 'SinhaleD' ch=6 rssi=-39 auth=3 <-- TARGET[0m
+[0;33mW (33216) main:     [2] 'GL-MT300N-V2-0fe' ch=6 rssi=-43 auth=3 [0m
+[0;33mW (33216) main:     [3] 'chap' ch=6 rssi=-64 auth=3 [0m
+[0;33mW (33226) main:     [4] 'chap-priv' ch=6 rssi=-66 auth=3 [0m
+[0;33mW (33226) main:     [5] 'TP_link_w' ch=11 rssi=-71 auth=3 [0m
+[0;33mW (33236) main:     [6] 'SinhaleD' ch=4 rssi=-72 auth=3 <-- TARGET[0m
+[0;33mW (33246) main:     [7] 'SinhaleD' ch=4 rssi=-76 auth=3 <-- TARGET[0m
+[0;33mW (33246) main:     [8] 'chap' ch=11 rssi=-78 auth=3 [0m
+[0;33mW (33256) main:     [9] 'chap-priv' ch=11 rssi=-79 auth=3 [0m
+[0;33mW (33266) main:     [10] 'SinhaleD' ch=4 rssi=-80 auth=3 <-- TARGET[0m
+[0;33mW (33266) main:     [11] 'TP-LINK_Smart Plug_F8C3' ch=6 rssi=-87 auth=0 [0m
+[0;33mW (33276) main:     [12] 'TEG-HB1' ch=6 rssi=-87 auth=3 [0m
+[0;33mW (33286) main:     [13] 'SinhaleD' ch=4 rssi=-91 auth=3 <-- TARGET[0m
+[0;33mW (33286) main:     [14] 'arctic wifi' ch=1 rssi=-92 auth=3 [0m
+[0;33mW (33296) main: Retryin

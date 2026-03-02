@@ -9,6 +9,19 @@ import sys
 import time
 from pathlib import Path
 
+def _debug_log(msg: str) -> None:
+    """Log shot fetch failures to stderr for debugging."""
+    print(f"[ble_binary_client] {msg}", file=sys.stderr)
+
+
+def _store_first(holder: list, data: bytearray) -> None:
+    if holder[0] is None:
+        holder[0] = bytes(data)
+
+
+def _store_latest(holder: list, data: bytearray) -> None:
+    holder[0] = bytes(data)
+
 # Ensure bleak is available
 _venv = Path(__file__).resolve().parents[2] / ".venv" / "lib" / "python3.11" / "site-packages"
 sys.path.insert(0, str(_venv))
@@ -45,8 +58,8 @@ def make_frame(cmd: int, plen: int = 1, payload: bytes | None = None) -> bytes:
     return struct.pack("<BH", cmd, plen) + pad[:plen]
 
 
-# Shorter delays for faster round-trip: 50ms after notify, poll every 25ms
-_NOTIFY_SETTLE_SEC = 0.05
+# Notify settle: allow CCC write to complete before first command (host/dongle may need >50ms)
+_NOTIFY_SETTLE_SEC = 0.2
 _POLL_INTERVAL_SEC = 0.025
 
 
@@ -71,13 +84,68 @@ async def _send_cmd(client, frame: bytes, timeout_sec: float = 3.0) -> bytes | N
             pass
 
 
-async def send_binary_cmd(addr: str, frame: bytes, timeout_sec: float = 3.0) -> tuple[bytes | None, str | None]:
-    """Connect, send frame, return (response_bytes, error_message)."""
+async def _request_chunk_with_notify(client, rsp_holder: list, frame: bytes, timeout_sec: float) -> bytes | None:
+    """Send one GET_SHOT_CHUNK while notify is already active. Ignore firmware ping (plen<10)."""
+    rsp_holder[0] = None
+    await client.write_gatt_char(SB_RX_CHAR, frame, response=False)
+    polls = int(timeout_sec / _POLL_INTERVAL_SEC)
+    for _ in range(max(1, polls)):
+        await asyncio.sleep(_POLL_INTERVAL_SEC)
+        rsp = rsp_holder[0]
+        if rsp is not None:
+            if len(rsp) >= 4 and rsp[0] == RSP_SHOT:
+                plen = struct.unpack_from("<H", rsp, 1)[0]
+                if plen < 10:
+                    rsp_holder[0] = None
+                    continue
+            return rsp
+    return None
+
+
+# Delay after connect to allow MTU exchange and link ready (BT 4.2+ host)
+_POST_CONNECT_MTU_DELAY_SEC = 1.0
+
+def _is_smartball_name(name) -> bool:
+    n = (name or "").strip()
+    return "SmartBall" in n or "XIAO" in n
+
+
+def _looks_like_mac(s: str) -> bool:
+    return bool(s) and ":" in s and len(s) >= 17
+
+
+async def _resolve_device(addr: str, timeout_sec: float = 12.0):
+    """Scan for BLE devices; return BLEDevice by address, or by name (SmartBall/XIAO) if address not in scan or addr is a name."""
+    from bleak import BleakScanner
+    devs = await BleakScanner.discover(timeout=timeout_sec)
+    if addr and _looks_like_mac(addr):
+        by_addr = next((d for d in devs if d.address.upper() == addr.upper()), None)
+        if by_addr:
+            return by_addr
+    return next((d for d in devs if _is_smartball_name(getattr(d, "name", None))), None)
+
+
+async def send_binary_cmd(addr: str, frame: bytes, timeout_sec: float = 3.0, device=None) -> tuple[bytes | None, str | None]:
+    """Connect, send frame, return (response_bytes, error_message). device: optional BLEDevice from scan."""
     from bleak import BleakClient
+    from bleak.exc import BleakDeviceNotFoundError
+    target = device if device is not None else addr
     try:
-        async with BleakClient(addr) as client:
+        async with BleakClient(target) as client:
+            await asyncio.sleep(_POST_CONNECT_MTU_DELAY_SEC)
             rsp = await _send_cmd(client, frame, timeout_sec)
             return (rsp, None)
+    except BleakDeviceNotFoundError:
+        device = await _resolve_device(addr)
+        if not device:
+            return (None, "device not found (not in BLE scan—power/range?).")
+        try:
+            async with BleakClient(device) as client:
+                await asyncio.sleep(_POST_CONNECT_MTU_DELAY_SEC)
+                rsp = await _send_cmd(client, frame, timeout_sec)
+                return (rsp, None)
+        except Exception as e:
+            return (None, str(e))
     except Exception as e:
         return (None, str(e))
 
@@ -87,16 +155,32 @@ def send_binary_cmd_sync(addr: str, frame: bytes, timeout_sec: float = 3.0) -> t
     return asyncio.run(send_binary_cmd(addr, frame, timeout_sec))
 
 
-# Chunk size: firmware BLE_BIN_MAX_PAYLOAD (495 with L2CAP_MTU=498; fallback 240 for older FW)
+# Chunk size: firmware caps at 20 for default ATT MTU; up to 495 if MTU negotiated
 FETCH_SHOT_CHUNK_SIZE = 495
 # One chunk per connection (legacy stable path)
 CHUNKS_PER_CONNECTION = 1
 _BETWEEN_CONNECTION_SEC = 1.5
+# Max bytes per BLE connection before voluntary reconnect (avoids long-connection timeouts)
+FETCH_SHOT_SEGMENT_MAX_BYTES = 5120
+FETCH_SHOT_SEGMENT_PAUSE_SEC = 1.2
+# Max reconnect retries for a single chunk (fresh connection each time)
+FETCH_SHOT_RECONNECT_RETRIES = 2
 
 
 def _is_disconnect_error(err: str) -> bool:
     s = (err or "").lower()
     return "disconnect" in s or "failed to discover" in s or "not found" in s or "in progress" in s
+
+
+def _payload_complete_from_header(payload: bytes) -> bool:
+    """True if payload has SVTSHOT3 header and we have at least expected_len bytes."""
+    if len(payload) < 24 or payload[:8] != b"SVTSHOT3":
+        return False
+    count = struct.unpack_from("<I", payload, 12)[0]
+    imu_mask = payload[17]
+    sample_size = 68 if (imu_mask & 0x06) else 28
+    expected_len = 24 + count * sample_size + 4
+    return len(payload) >= expected_len
 
 
 async def fetch_shot_one_connection_async(
@@ -106,39 +190,98 @@ async def fetch_shot_one_connection_async(
     chunk_size: int = FETCH_SHOT_CHUNK_SIZE,
     timeout_per_chunk: float = 5.0,
     delay_between_chunks_sec: float = 0.04,
+    device=None,
 ) -> tuple[bytes | None, str | None]:
-    """Fetch full shot in ONE BLE connection; delay_between_chunks_sec can help avoid mid-transfer disconnect."""
+    """Fetch full shot; reconnects every SEGMENT_MAX_BYTES to avoid long-connection timeouts."""
     from bleak import BleakClient
     if size <= 0:
         return (None, "invalid size")
+    device = device or await _resolve_device(addr)
+    if not device:
+        return (None, "device not found (not in BLE scan—power/range?). Try scanning again.")
     if size <= chunk_size:
         frame = make_frame(CMD_GET_SHOT, payload=struct.pack("<I", shot_id))
-        rsp, err = await send_binary_cmd(addr, frame, timeout_per_chunk)
+        rsp, err = await send_binary_cmd(addr, frame, timeout_per_chunk, device=device)
         if err:
             return (None, err)
         if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
             return (None, "no response or not RSP_SHOT")
         plen = struct.unpack_from("<H", rsp, 1)[0]
         return (rsp[3:3 + plen], None)
+    _CHUNK_RETRIES = 3
+    _CHUNK_RETRIES_LAST = 5  # more retries for final chunk
+    last_chunk_timeout_mult = 3.0
+    payload = b""
+    offset = 0
+    reconnect_retry_count = 0
     try:
-        async with BleakClient(addr) as client:
-            payload = b""
-            offset = 0
-            while offset < size:
-                frame = make_frame(CMD_GET_SHOT_CHUNK, payload=struct.pack("<IH", shot_id, offset))
-                rsp = await _send_cmd(client, frame, timeout_sec=timeout_per_chunk)
-                if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
-                    return (None, "chunk failed or timeout")
-                plen = struct.unpack_from("<H", rsp, 1)[0]
-                payload += rsp[3:3 + plen]
-                offset += plen
-                if plen < chunk_size:
-                    break
-                if delay_between_chunks_sec > 0:
-                    await asyncio.sleep(delay_between_chunks_sec)
-            if len(payload) < size:
-                return (None, "incomplete fetch")
-            return (payload, None)
+        while offset < size:
+            segment_start = offset
+            async with BleakClient(device) as client:
+                await asyncio.sleep(_POST_CONNECT_MTU_DELAY_SEC)
+                rsp_holder = [None]
+                def on_notify(_, data: bytearray):
+                    rsp_holder[0] = bytes(data)
+                await client.start_notify(SB_TX_CHAR, on_notify)
+                await asyncio.sleep(_NOTIFY_SETTLE_SEC)
+                try:
+                    while offset < size and (offset - segment_start) < FETCH_SHOT_SEGMENT_MAX_BYTES:
+                        frame = make_frame(CMD_GET_SHOT_CHUNK, payload=struct.pack("<IH", shot_id, offset))
+                        is_final_chunk = (offset + chunk_size >= size)
+                        chunk_timeout = timeout_per_chunk * (last_chunk_timeout_mult if is_final_chunk else 1.0)
+                        retries = _CHUNK_RETRIES_LAST if is_final_chunk else _CHUNK_RETRIES
+                        if is_final_chunk:
+                            await asyncio.sleep(0.2)  # give device time to prepare last chunk
+                        rsp = None
+                        for attempt in range(retries):
+                            rsp = await _request_chunk_with_notify(client, rsp_holder, frame, chunk_timeout)
+                            if rsp is not None and len(rsp) >= 4 and rsp[0] == RSP_SHOT:
+                                break
+                            if rsp is not None and _payload_complete_from_header(payload):
+                                _debug_log(f"GET_SHOT_CHUNK offset={offset}: non-SHOT but payload complete, accepting")
+                                break
+                            if rsp is not None and is_final_chunk and rsp[0] != RSP_SHOT and _payload_complete_from_header(payload):
+                                break  # e.g. STATUS at end, we already have full shot
+                            if rsp is None:
+                                _debug_log(f"GET_SHOT_CHUNK offset={offset} attempt={attempt + 1}: no notify within timeout")
+                            else:
+                                _debug_log(f"GET_SHOT_CHUNK offset={offset} attempt={attempt + 1}: rsp[0]=0x{rsp[0]:02x} len={len(rsp)}")
+                            if attempt < retries - 1:
+                                await asyncio.sleep(0.4)
+                        if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
+                            if _payload_complete_from_header(payload):
+                                _debug_log("chunk failed or timeout but payload complete from header, accepting")
+                                return (payload, None)
+                            _debug_log(f"chunk offset={offset} failed, will retry with fresh connection ({reconnect_retry_count + 1}/{FETCH_SHOT_RECONNECT_RETRIES + 1})")
+                            break
+                        plen = struct.unpack_from("<H", rsp, 1)[0]
+                        payload += rsp[3:3 + plen]
+                        offset += plen
+                        if plen == 0 or offset >= size:
+                            break
+                        if delay_between_chunks_sec > 0:
+                            await asyncio.sleep(delay_between_chunks_sec)
+                finally:
+                    try:
+                        await client.stop_notify(SB_TX_CHAR)
+                    except Exception:
+                        pass
+            if offset >= size:
+                break
+            if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
+                if reconnect_retry_count < FETCH_SHOT_RECONNECT_RETRIES:
+                    reconnect_retry_count += 1
+                    _debug_log(f"chunk failed, retrying same offset with fresh connection (attempt {reconnect_retry_count + 1})")
+                    await asyncio.sleep(FETCH_SHOT_SEGMENT_PAUSE_SEC)
+                    continue
+                return (None, f"chunk failed or timeout at offset {offset} (got {len(payload)}/{size} bytes)")
+            reconnect_retry_count = 0
+            await asyncio.sleep(FETCH_SHOT_SEGMENT_PAUSE_SEC)
+        if len(payload) < size:
+            if _payload_complete_from_header(payload):
+                return (payload, None)
+            return (None, f"incomplete fetch: got {len(payload)}/{size} bytes")
+        return (payload, None)
     except Exception as e:
         return (None, str(e))
 
@@ -165,14 +308,18 @@ async def fetch_shot_chunked_async(
     chunk_size: int = FETCH_SHOT_CHUNK_SIZE,
     timeout_per_chunk: float = 5.0,
     between_segment_callback=None,
+    device=None,
 ) -> tuple[bytes | None, str | None]:
     """Fetch full shot by GET_SHOT_CHUNK. One chunk per connection; optional callback between segments (e.g. force disconnect + wait)."""
     from bleak import BleakClient
     if size <= 0:
         return (None, "invalid size")
+    device = device or await _resolve_device(addr)
+    if not device:
+        return (None, "device not found (not in BLE scan—power/range?).")
     if size <= chunk_size:
         frame = make_frame(CMD_GET_SHOT, payload=struct.pack("<I", shot_id))
-        rsp, err = await send_binary_cmd(addr, frame, timeout_per_chunk)
+        rsp, err = await send_binary_cmd(addr, frame, timeout_per_chunk, device=device)
         if err:
             return (None, err)
         if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
@@ -193,21 +340,42 @@ async def fetch_shot_chunked_async(
         attempt = 0
         while attempt < max_retries:
             try:
-                async with BleakClient(addr) as client:
-                    while offset < size and chunk_count_this_conn < CHUNKS_PER_CONNECTION:
-                        frame = make_frame(CMD_GET_SHOT_CHUNK, payload=struct.pack("<IH", shot_id, offset))
-                        rsp = await _send_cmd(client, frame, timeout_sec=timeout_per_chunk)
-                        if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
-                            return (None, "chunk failed or timeout")
-                        plen = struct.unpack_from("<H", rsp, 1)[0]
-                        total_payload += rsp[3:3 + plen]
-                        offset += plen
-                        chunk_count_this_conn += 1
-                        if plen < chunk_size:
+                async with BleakClient(device) as client:
+                    await asyncio.sleep(_POST_CONNECT_MTU_DELAY_SEC)
+                    rsp_holder = [None]
+                    try:
+                        await client.start_notify(SB_TX_CHAR, lambda _, data: _store_latest(rsp_holder, data))
+                        await asyncio.sleep(_NOTIFY_SETTLE_SEC)
+                        # Workaround: STATUS as 1st notify so GET_SHOT_CHUNK is 2nd (host/dongle may drop 3rd).
+                        await client.write_gatt_char(SB_RX_CHAR, make_frame(CMD_STATUS, payload=b"\x00"), response=False)
+                        for _ in range(int(2.0 / _POLL_INTERVAL_SEC)):
+                            await asyncio.sleep(_POLL_INTERVAL_SEC)
+                            if rsp_holder[0] is not None:
+                                break
+                        rsp_holder[0] = None
+                        while offset < size and chunk_count_this_conn < CHUNKS_PER_CONNECTION:
+                            frame = make_frame(CMD_GET_SHOT_CHUNK, payload=struct.pack("<IH", shot_id, offset))
+                            rsp = await _request_chunk_with_notify(client, rsp_holder, frame, timeout_per_chunk)
+                            if not rsp or len(rsp) < 4 or rsp[0] != RSP_SHOT:
+                                if rsp is None:
+                                    _debug_log(f"GET_SHOT_CHUNK offset={offset}: no notify within timeout")
+                                else:
+                                    _debug_log(f"GET_SHOT_CHUNK offset={offset}: rsp[0]=0x{rsp[0]:02x} (expected 0x8a RSP_SHOT), len={len(rsp)}, hex={rsp[:min(20,len(rsp))].hex()}")
+                                return (None, f"chunk failed or timeout at offset {offset} (got {len(total_payload)}/{size} bytes)")
+                            plen = struct.unpack_from("<H", rsp, 1)[0]
+                            total_payload += rsp[3:3 + plen]
+                            offset += plen
+                            chunk_count_this_conn += 1
+                            if plen < chunk_size:
+                                break
+                        if offset >= size or len(total_payload) >= size:
                             break
-                    if offset >= size or len(total_payload) >= size:
                         break
-                    break
+                    finally:
+                        try:
+                            await client.stop_notify(SB_TX_CHAR)
+                        except Exception:
+                            pass
             except Exception as e:
                 err_msg = str(e)
                 if not _is_disconnect_error(err_msg):
@@ -218,7 +386,7 @@ async def fetch_shot_chunked_async(
                 await asyncio.sleep(_BETWEEN_CONNECTION_SEC)
                 continue
     if len(total_payload) < size:
-        return (None, "incomplete fetch")
+        return (None, f"incomplete fetch: got {len(total_payload)}/{size} bytes")
     return (total_payload, None)
 
 
@@ -325,16 +493,29 @@ def format_response(rsp: bytes | None) -> str:
         temp_s8 = struct.unpack_from("<b", rsp, 9)[0]
         lines.append("--- Diagnostics ---")
         lines.append(f"  Internal IMU: {'ready' if imu_ready else 'not ready'}")
-        lines.append(f"  WHO_AM_I: 0x{whoami:02X}" + (" (LSM6DS3TR-C)" if whoami == 0x6A else ""))
+        chip_hint = " (LSM6DS3TR-C)" if whoami == 0x6A else (" (ESP32-C6)" if whoami == 0xC6 else "")
+        lines.append(f"  WHO_AM_I: 0x{whoami:02X}" + chip_hint)
         lines.append(f"  Voltage: {voltage_mv} mV" + (f" ({voltage_mv/1000:.2f} V)" if voltage_mv > 0 else " (n/a)"))
         lines.append(f"  Temp: {temp_s8 * 0.1:.1f}°C")
-        if len(rsp) >= 16:
+        if len(rsp) >= 16 and whoami != 0xC6:
             lsm6_ok = rsp[10]
             fa = struct.unpack_from("<H", rsp, 11)[0]
             fg = struct.unpack_from("<H", rsp, 13)[0]
             lines.append("--- LSM6DSOX (SPI) debug ---")
             lines.append(f"  Last read OK: {'yes' if lsm6_ok else 'no'}")
             lines.append(f"  Fail accel: {fa}  Fail gyro: {fg}")
+        if whoami == 0xC6 and len(rsp) >= 24:
+            rssi = struct.unpack_from("<b", rsp, 15)[0]
+            free_heap = struct.unpack_from("<I", rsp, 16)[0]
+            reset_reason = rsp[20]
+            cores = rsp[21]
+            rev = rsp[22]
+            lines.append("--- ESP32-C6 ---")
+            if rssi > -128:
+                lines.append(f"  WiFi RSSI: {rssi} dBm")
+            lines.append(f"  Free heap: {free_heap} B")
+            rr_names = {0: "?", 1: "POR", 2: "pin", 3: "soft", 4: "panic", 5: "int_wdt", 6: "task_wdt", 7: "deep_sleep", 8: "brownout"}
+            lines.append(f"  Reset: {rr_names.get(reset_reason, reset_reason)}  Cores: {cores}  Rev: {rev}")
     elif rtype == RSP_SELFTEST and len(rsp) >= 4:
         result = rsp[3]
         lines.append("--- Self-test ---")
@@ -382,6 +563,7 @@ def format_response(rsp: bytes | None) -> str:
                 sz = struct.unpack_from("<I", rsp, off + 4)[0]
                 lines.append(f"  [{i}] id={sid}  size={sz} B")
     elif rtype == RSP_BUS_SCAN and len(rsp) >= 5:
+        plen = struct.unpack_from("<H", rsp, 1)[0]
         spi_n = rsp[3]
         off = 4
         spi_type_names = {1: "LSM6DSOX", 2: "ADXL375", 3: "W25Q64"}
@@ -403,6 +585,8 @@ def format_response(rsp: bytes | None) -> str:
                 lines.append(f"  [{cs}] {name}  id={id0:02X}{id1:02X}{id2:02X}  {present}")
         i2c_n = rsp[off] if off < len(rsp) else 0
         off += 1
+        if spi_n == 0 and i2c_n == 0:
+            lines.append("  (none — ESP32-C6 has no on-board SPI/I2C sensors)")
         lines.append("--- I2C bus ---")
         for i in range(i2c_n):
             if off + 2 > len(rsp):
@@ -412,6 +596,8 @@ def format_response(rsp: bytes | None) -> str:
             present = "✓" if (flags & 0x01) else "✗"
             dev_name = "LSM6DS3TR-C" if addr == 0x6A else f"0x{addr:02X}"
             lines.append(f"  0x{addr:02X} ({dev_name})  {present}")
+        if i2c_n == 0 and spi_n == 0:
+            lines.append("  (none)")
     elif rtype == RSP_SPI_DATA and len(rsp) >= 3:
         data_len = struct.unpack_from("<H", rsp, 1)[0]
         data = rsp[3:3 + data_len] if len(rsp) >= 3 + data_len else rsp[3:]

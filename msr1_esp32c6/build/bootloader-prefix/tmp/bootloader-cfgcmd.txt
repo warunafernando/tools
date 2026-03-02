@@ -1,0 +1,1 @@
+cmd='/usr/bin/cmake;-DSDKCONFIG=/home/mini/tools/msr1_esp32c6/sdkconfig;-DIDF_PATH=/home/mini/esp/esp-idf;-DIDF_TARGET=esp32c6;-DPYTHON_DEPS_CHECKED=1;-DPYTHON=/home/mini/.espressif/python_env/idf5.1_py3.11_env/bin/python;-DEXTRA_COMPONENT_DIRS=/home/mini/esp/esp-idf/components/bootloader;-DPROJECT_SOURCE_DIR=/home/mini/tools/msr1_esp32c6;-GNinja;<SOURCE_DIR><SOURCE_SUBDIR>'
